@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+umask 077
+cd "$(dirname "$0")"
+account=${VILAR_OUTLOOK_ACCOUNT:?Set VILAR_OUTLOOK_ACCOUNT to the test mailbox address}
+case "$account" in
+    ''|*[!a-zA-Z0-9@._+-]*|.*|*..*) echo "Invalid Outlook account" >&2; exit 2 ;;
+esac
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}/vilar/outlook/$account"
+export MS365_MCP_EXPECTED_USERNAME="$account"
+export MS365_MCP_TENANT_ID=consumers
+mkdir -p "$XDG_CONFIG_HOME"
+tools='^(list-mail-folder-messages|get-mail-message|create-draft-email|create-reply-draft|send-draft-message)$'
+case "${1:-serve}" in
+    login) set -- --login ;;
+    permissions) set -- --list-permissions ;;
+    serve) set -- ;;
+    *) echo "Usage: outlook [login|permissions|serve]" >&2; exit 2 ;;
+esac
+exec ./node_modules/.bin/ms-365-mcp-server --enabled-tools "$tools" --allowed-scopes 'Mail.ReadWrite Mail.Send User.Read' "$@"
