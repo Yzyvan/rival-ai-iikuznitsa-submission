@@ -47,6 +47,14 @@ export function App() {
   const [onboard, setOnboard] = useState(() => !isBrowserTest && needOnboarding(deep.skip, !!deep.sheet || deep.screens.length > 0 || !!deep.tab));
   const [tab, setTab] = useState<TabId>(deep.tab ?? "board");
   const [stage, setStage] = useState<StageId>(deep.stage ?? defaultStage);
+  const selectStage = useCallback((next: StageId) => {
+    setStage(next);
+    if (isBrowserTest) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("open", "board:" + next);
+      window.history.replaceState(window.history.state, "", url);
+    }
+  }, []);
   // вложенные экраны поверх раздела меню — стопкой, чтобы «назад» возвращал на предыдущий
   const [stack, setStack] = useState<Layer[]>(deep.screens.map((id) => ({ id })));
   const top = stack[stack.length - 1] ?? null;
@@ -101,10 +109,10 @@ export function App() {
       else setStack((x) => x.slice(0, -1));
     }
     else if (kind === "home") { setSheet(null); setStack([]); }
-    else if (kind === "board") { setSheet(null); setStack([]); setTab("board"); setStage(id as StageId); }
+    else if (kind === "board") { setSheet(null); setStack([]); setTab("board"); selectStage(id as StageId); }
     else if (kind === "tab") { setSheet(null); setStack([]); setTab(id as TabId); }
     else setSheet(null);
-  }, []);
+  }, [selectStage]);
 
   const done = useCallback(() => setLoading(false), []);
   // фон Telegram: пока идёт прелоудер — в цвет градиента (без чёрной вспышки), потом — чёрный, как у приложения
@@ -114,13 +122,13 @@ export function App() {
     try { tg?.setBackgroundColor?.(c); tg?.setHeaderColor?.(c); } catch { /* вне Telegram */ }
     document.documentElement.style.background = c;
   }, [loading, onboard]);
-  const changeTab = (t: TabId) => { setTab(t); if (t === "board") setStage(defaultStage); };
+  const changeTab = (t: TabId) => { setTab(t); if (t === "board") selectStage(defaultStage); };
 
   return (
     <NavContext.Provider value={nav}>
       <div className="app">
         {/* раздел меню рисуется всегда — вложенный экран ложится сверху (и может раскрыться кругом из кнопки) */}
-        {tab === "board" && <Board stage={stage} onStage={setStage} />}
+        {tab === "board" && <Board stage={stage} onStage={selectStage} />}
         {tab === "tasks" && (isBrowserTest || showTracker
           ? <TaskBindingsProvider bindings={standBindings}><TrackerTasks /></TaskBindingsProvider>
           : <Tasks />)}
