@@ -5,20 +5,27 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const request = JSON.parse(readFileSync(0, "utf8"));
-const operations = { message: "get-mail-message", folderMessages: "list-mail-folder-messages", create: "create-subscription", renew: "update-subscription" };
+const operations = { message: "get-mail-message", folderMessages: "list-mail-folder-messages", create: "create-subscription", renew: "update-subscription", inspect: "get-subscription", remove: "delete-subscription" };
 const tool = operations[request.operation];
 if (!tool) throw new Error("Unsupported Outlook operation");
 const client = new Client({name: "vilar-mail-stage", version: "1"});
 try {
   const args = ["--enabled-tools", "^" + tool + "$", "--allowed-scopes", "Mail.Read Calendars.Read User.Read"];
-  if (["message", "folderMessages"].includes(request.operation)) args.push("--read-only");
+  if (["message", "folderMessages", "inspect"].includes(request.operation)) args.push("--read-only");
   await client.connect(new StdioClientTransport({
     command: fileURLToPath(new URL("./node_modules/.bin/ms-365-mcp-server", import.meta.url)),
     args, env: process.env, stderr: "ignore",
   }));
   const result = await client.callTool({name: tool, arguments: request.args});
-  if (result.isError) throw new Error("provider refused");
-  process.stdout.write(result.content[0].text);
+  if (result.isError) {
+    if (request.operation === "inspect" && result._meta?.http_status === 404) {
+      process.stdout.write("null");
+    } else {
+      throw new Error("provider refused");
+    }
+  } else {
+    process.stdout.write(request.operation === "remove" ? "{}" : result.content[0].text);
+  }
 } catch {
   process.stderr.write("Outlook operation failed\n");
   process.exitCode = 1;

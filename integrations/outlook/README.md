@@ -25,3 +25,8 @@ to import the adapter from this directory and uses VILAR_MAIL_PUSH_DIR and
 VILAR_MAIL_CLIENT_STATE. The mail worker must use the same state directory. Before
 enabling mail, verify that calendar-only notifications still work with mail disabled.
 Run the public contract test with python3 test_mail_push.py from this directory.
+
+To end a temporary Inbox subscription, use mail_push.py unsubscribe --expected-id ID
+with its original mail state directory and HTTPS callback. The command checks the
+recorded ID, resource, callback and change type before deletion and verifies a
+provider 404 before removing the local subscription record.

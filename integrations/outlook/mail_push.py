@@ -3,6 +3,7 @@ import argparse
 import asyncio
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+import fcntl
 import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -175,9 +176,26 @@ def process_one(db, fetch, core):
     return True
 
 
+def remove_subscription(provider, subscription, expected, callback):
+    if not expected or expected != subscription.read_text().strip():
+        raise ValueError("requested subscription differs from the recorded mail subscription")
+    args = {"subscriptionId": expected}
+    current = provider("inspect", **args)
+    if current is not None:
+        if (current.get("id") != expected or current.get("notificationUrl") != callback
+                or current.get("resource", "").strip("/").lower() != RESOURCE.strip("/").lower()
+                or current.get("changeType") != "created"):
+            raise ValueError("subscription does not match the temporary mail input")
+        provider("remove", **args, confirm=True)
+        if provider("inspect", **args) is not None:
+            raise RuntimeError("provider has not confirmed removal")
+    subscription.unlink()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["serve", "work", "status", "subscribe", "renew"])
+    parser.add_argument("command", choices=["serve", "work", "status", "subscribe", "renew", "unsubscribe"])
+    parser.add_argument("--expected-id", help="exact recorded mail subscription to remove")
     args = parser.parse_args()
     os.umask(0o077)
     directory = Path(os.environ["VILAR_MAIL_PUSH_DIR"])
@@ -206,21 +224,31 @@ def main():
                 if not process_one(db, lambda mid: fetch_envelope(graph, account, mid), core):
                     time.sleep(0.5)
         else:
-            # This is an explicit operator action on the test mailbox.
-            until = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
-            body = {"expirationDateTime": until}
-            if args.command == "subscribe":
-                if subscription.exists():
-                    parser.error("subscription already recorded; use renew")
-                state = os.environ["VILAR_MAIL_CLIENT_STATE"]
-                url = os.environ["VILAR_MAIL_CALLBACK"]
-                if len(state) < 32 or urlsplit(url).scheme != "https" or urlsplit(url).path != CALLBACK:
-                    parser.error("invalid HTTPS callback or client state")
-                body.update(resource=RESOURCE, notificationUrl=url, clientState=state, changeType="created")
-                result = graph("create", body=body)
-                subscription.write_text(result["id"])
-            else:
-                graph("renew", subscriptionId=subscription.read_text().strip(), body=body)
+            # Serialize operator changes to this mailbox's recorded rule.
+            with (directory / "subscription.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                manage_subscription(args, parser, subscription)
+
+
+def manage_subscription(args, parser, subscription):
+    if args.command == "unsubscribe":
+        remove_subscription(graph, subscription, args.expected_id, os.environ["VILAR_MAIL_CALLBACK"])
+        return
+    # This is an explicit operator action on the test mailbox.
+    until = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
+    body = {"expirationDateTime": until}
+    if args.command == "subscribe":
+        if subscription.exists():
+            parser.error("subscription already recorded; use renew")
+        state = os.environ["VILAR_MAIL_CLIENT_STATE"]
+        url = os.environ["VILAR_MAIL_CALLBACK"]
+        if len(state) < 32 or urlsplit(url).scheme != "https" or urlsplit(url).path != CALLBACK:
+            parser.error("invalid HTTPS callback or client state")
+        body.update(resource=RESOURCE, notificationUrl=url, clientState=state, changeType="created")
+        result = graph("create", body=body)
+        subscription.write_text(result["id"])
+    else:
+        graph("renew", subscriptionId=subscription.read_text().strip(), body=body)
 
 
 if __name__ == "__main__":

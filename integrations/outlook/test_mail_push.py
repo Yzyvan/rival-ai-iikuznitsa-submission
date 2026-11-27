@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from mail_push import database, initialize, process_one, queue_notifications
+from mail_push import database, initialize, process_one, queue_notifications, remove_subscription
 
 
 class MailPushContractTest(unittest.TestCase):
@@ -39,6 +39,33 @@ class MailPushContractTest(unittest.TestCase):
         self.assertEqual(core.submit.call_args.args[0], event)
         self.assertTrue(core.submit.call_args.args[1])
         core.read.assert_called_once_with(receipt["event_id"])
+
+    def test_remove_only_the_expected_mail_rule(self):
+        callback = "https://example.test/callback"
+        rule = {"id": "mail-id", "notificationUrl": callback,
+                "resource": "/me/mailFolders('inbox')/messages", "changeType": "created"}
+        with tempfile.TemporaryDirectory() as folder:
+            record = Path(folder) / "subscription"
+            record.write_text("mail-id")
+            provider = Mock()
+            with self.assertRaises(ValueError):
+                remove_subscription(provider, record, "other", callback)
+            provider.assert_not_called()
+            for changed in ({"resource": "/me/events"}, {"notificationUrl": "https://other.test/cb"},
+                            {"id": "different-rule"}, {"changeType": "deleted"}):
+                provider = Mock(return_value={**rule, **changed})
+                with self.assertRaises(ValueError):
+                    remove_subscription(provider, record, "mail-id", callback)
+                provider.assert_called_once_with("inspect", subscriptionId="mail-id")
+                self.assertTrue(record.exists())
+            provider = Mock(side_effect=[rule, {}, rule])
+            with self.assertRaises(RuntimeError):
+                remove_subscription(provider, record, "mail-id", callback)
+            self.assertTrue(record.exists())
+            provider = Mock(return_value=None)
+            remove_subscription(provider, record, "mail-id", callback)
+            provider.assert_called_once_with("inspect", subscriptionId="mail-id")
+            self.assertFalse(record.exists())
 
 
 if __name__ == "__main__":

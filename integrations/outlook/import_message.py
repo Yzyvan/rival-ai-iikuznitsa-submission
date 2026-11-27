@@ -11,9 +11,6 @@ import re
 import sys
 from urllib.error import HTTPError
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sources"))
 from client import SourceClient
 
@@ -122,6 +119,9 @@ def event_for(msg, account, message_id, revision, change, parent_id):
 
 
 async def read_message(account, message_id, change):
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
     env = {"VILAR_OUTLOOK_ACCOUNT": account, "MS365_MCP_BODY_FORMAT": "text",
            "MS365_MCP_OUTPUT_FORMAT": "json"}
     if os.environ.get("XDG_CONFIG_HOME"):
