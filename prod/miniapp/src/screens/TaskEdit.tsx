@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ActionBar, Avatar, Button, Icon, IconButton, PersonChip, ScreenHeader, Section, Segmented, Status, Tags, ToggleRow, VilarHint } from "../ui";
 import { useNav } from "../nav";
 import { PickDateSheet, shortDate } from "./PickDateSheet";
@@ -8,6 +8,39 @@ const people = [
   { name: "Павел Егоров", short: "Павел", initials: "ПЕ" },
   { name: "Мария Лебедева", short: "Мария", initials: "МЛ" },
 ];
+
+/** Название поручения: карандаш — сразу правка на месте (текст переносится по строкам), галочка — сохранить. */
+function EditableTitle({ text }: { text: string }) {
+  const [value, setValue] = useState(text);
+  const [editing, setEditing] = useState(false);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const pressing = useRef(false);   // палец на галочке: блюр поля не должен закрывать правку раньше нажатия
+  useLayoutEffect(() => {           // поле растёт по высоте вместе с текстом
+    const el = input.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value, editing]);
+  useEffect(() => {
+    const el = input.current;
+    if (editing && el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, [editing]);
+  const finish = () => { setEditing(false); setValue((v) => (v.trim() ? v.trim() : text)); };
+  return (
+    <div className="row" style={{ gap: 12, alignItems: "flex-start", alignSelf: "stretch" }}>
+      {editing
+        ? <textarea ref={input} className="title-input t-title-m grow" rows={1} value={value} aria-label="Название поручения"
+            onChange={(e) => setValue(e.target.value.replace(/\n/g, " "))}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); finish(); } }}
+            onBlur={() => { if (!pressing.current) finish(); }} />
+        : <h1 className="t-title-m grow">{value}</h1>}
+      <span onPointerDown={(e) => { pressing.current = true; e.preventDefault(); }} onPointerCancel={() => { pressing.current = false; }}>
+        <IconButton icon={editing ? "check" : "edit"} size={36} label={editing ? "Сохранить" : "Изменить текст"}
+          onClick={() => { pressing.current = false; if (editing) finish(); else setEditing(true); }} />
+      </span>
+    </div>
+  );
+}
 
 /** Поручение: Vilar уже подставил исполнителя и срок — пользователь проверяет и сохраняет. */
 export function TaskEdit() {
@@ -25,10 +58,7 @@ export function TaskEdit() {
         <div className="body">
           <div className="head">
             <Status label="уточнить" type="Внимание" tone="Яркая" />
-            <div className="row" style={{ gap: 12, alignItems: "flex-start", alignSelf: "stretch" }}>
-              <h1 className="t-title-l grow">Согласовать окно работ с клиентом</h1>
-              <IconButton icon="edit" size={36} label="Изменить текст" />
-            </div>
+            <EditableTitle text="Согласовать окно работ с клиентом" />
             <VilarHint text="Vilar подставил исполнителя и срок — проверьте" />
             <div className="stack" style={{ gap: 8, paddingTop: 8 }}>
               <p className="t-body-l c-secondary">«…окно работ надо согласовать с клиентом до пятницы»</p>

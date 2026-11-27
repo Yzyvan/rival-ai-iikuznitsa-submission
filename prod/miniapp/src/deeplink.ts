@@ -23,9 +23,6 @@ function rawTargets(): { targets: string[]; skip: boolean } {
   if (open) targets.push(...open.split(",").map((s) => s.trim()).filter(Boolean));
   const start = q.get("tgWebAppStartParam") ?? (window as any).Telegram?.WebApp?.initDataUnsafe?.start_param;
   if (typeof start === "string" && start) {
-    if (/^ms_(?:[\w-]{43}|error)$/.test(start)) {
-      try { if (localStorage.getItem("vilar:onboarded") === "1") targets.push("screen:profile"); } catch { targets.push("screen:profile"); }
-    }
     for (const part of start.split("__")) {
       const cut = part.indexOf("-");
       if (cut > 0) targets.push(part.slice(0, cut) + ":" + part.slice(cut + 1));
@@ -52,8 +49,9 @@ export function readDeepLink(nested: Record<string, unknown>): DeepLink {
     if (kind === "tab" && TABS.includes(id as TabId)) link.tab = id as TabId;
     else if (kind === "board" && id in boards) { link.tab = "board"; link.stage = id as StageId; }
     else if (kind === "screen" && id in nested) link.screens.push(id);
-    else if (kind === "sheet" && (id in sheets || id === "newtask")) link.sheet = id;
+    else if (kind === "sheet" && (id in sheets || id === "newtask" || id === "filter")) link.sheet = id;
   }
+  if (link.sheet === "filter" && !link.tab) link.tab = "tasks";   // фильтр живёт в Тасках
   if (link.sheet && !link.tab && !link.screens.length) Object.assign(link, homeOf(link.sheet));
   // открыли по ссылке на конкретное место — сразу туда, без прелоудера
   if (link.tab || link.screens.length || link.sheet) link.skip = true;

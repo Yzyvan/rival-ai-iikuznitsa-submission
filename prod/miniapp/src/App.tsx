@@ -6,10 +6,10 @@ import { TabBar, UndoToast, type TabId } from "./ui";
 import { Preloader } from "./screens/Preloader";
 import { Onboarding, needOnboarding } from "./screens/Onboarding";
 import { Board } from "./screens/Board";
-import { Tasks as DemoTasks } from "./screens/Tasks";
 import { Tasks, TaskBindingsProvider } from "../../../integrations/tracker/src";
 import { trackerBindings } from "../../../integrations/tracker/transport/bindings";
 import "../../../integrations/tracker/src/style.css";
+const standBindings = { ...trackerBindings, priorities: undefined };
 import { Stats } from "./screens/Stats";
 import { SheetView } from "./screens/SheetView";
 import { Protocol } from "./screens/Protocol";
@@ -19,6 +19,7 @@ import { Notifications } from "./screens/Notifications";
 import { Profile } from "./screens/Profile";
 import { NoAccess } from "./screens/NoAccess";
 import { NewTaskSheet } from "./screens/NewTaskSheet";
+import { FilterSheet } from "./screens/FilterSheet";
 import { PickDateSheet, shortDate } from "./screens/PickDateSheet";
 import { sheets } from "./data/sheets";
 import { readDeepLink } from "./deeplink";
@@ -80,7 +81,8 @@ export function App() {
   }, []);
 
   const nav = useCallback((target: string) => {
-    const cut = target.indexOf(":"), kind = target.slice(0, cut), id = target.slice(cut + 1);   // id сам может содержать «:» (авто-шторки задач)
+    // «back», «home» — без двоеточия; у шторок id сам может содержать «:» (авто-шторки задач)
+    const cut = target.indexOf(":"), kind = cut < 0 ? target : target.slice(0, cut), id = cut < 0 ? "" : target.slice(cut + 1);
     if (kind === "sheet") setSheet(id);
     else if (kind === "pick") { setPick({ toast: id, about: sheetRef.current ? sheets[sheetRef.current]?.title : undefined }); setSheet(null); }
     else if (kind === "toast") { setSheet(null); setToast({ id, key: Date.now() }); }
@@ -112,7 +114,7 @@ export function App() {
       <div className="app">
         {/* раздел меню рисуется всегда — вложенный экран ложится сверху (и может раскрыться кругом из кнопки) */}
         {tab === "board" && <Board stage={stage} onStage={setStage} />}
-        {tab === "tasks" && (new URLSearchParams(window.location.search).get("demo") === "1" ? <DemoTasks /> : <TaskBindingsProvider bindings={trackerBindings}><Tasks /></TaskBindingsProvider>)}
+        {tab === "tasks" && <TaskBindingsProvider bindings={standBindings}><Tasks /></TaskBindingsProvider>}
         {tab === "stats" && <Stats />}
         <TabBar active={tab} onChange={changeTab} />
         {top && nested[top.id] && (
@@ -131,7 +133,8 @@ export function App() {
             onPick={(d, t) => { setPick(null); setToast({ id: pick.toast, key: Date.now(), text: `Срок перенесён на ${shortDate(d).split(", ")[1]}, ${t} — исполнитель уведомлён` }); }} />
         )}
         {sheet === "newtask" && <NewTaskSheet onClose={() => setSheet(null)} onToast={(id) => setToast({ id, key: Date.now() })} />}
-        {sheet && sheet !== "newtask" && <SheetView key={sheet} id={sheet} onAction={nav} />}
+        {sheet === "filter" && <FilterSheet onClose={() => setSheet(null)} />}
+        {sheet && sheet !== "newtask" && sheet !== "filter" && <SheetView key={sheet} sheet={sheets[sheet]} onAction={nav} />}
         {/* любое действие пользователя можно отменить: все тосты — с отсчётом */}
         {toast && toasts[toast.id] && <UndoToast key={toast.key} text={toast.text ?? toasts[toast.id].text} onCommit={() => { takePending()?.(); setToast(null); }} onCancel={() => { takePending(); setToast(null); }} />}
         {onboard && <Onboarding active={!loading} onDone={() => setOnboard(false)} />}

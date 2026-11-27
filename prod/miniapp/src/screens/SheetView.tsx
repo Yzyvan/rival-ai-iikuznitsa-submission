@@ -1,11 +1,10 @@
 import { useRef, useState } from "react";
 import { useSwipeDown } from "../ui/useSwipeDown";
-import { sheets } from "../data/sheets";
+import type { SheetData } from "../data/sheets";
 import { Button, DraftCard, Status, Tags, VilarMessage } from "../ui";
 
 /** Шторка поверх экрана. Закрывается по затемнению и по кнопке; действие может показать тост или увести на экран. */
-export function SheetView({ id, onAction }: { id: string; onAction: (to: string) => void }) {
-  const s = sheets[id];
+export function SheetView({ sheet: s, onAction }: { sheet: SheetData; onAction: (to: string) => void }) {
   const [closing, setClosing] = useState(false);
   const run = (to: string) => { setClosing(true); setTimeout(() => onAction(to), 200); };
   const box = useRef<HTMLDivElement>(null);

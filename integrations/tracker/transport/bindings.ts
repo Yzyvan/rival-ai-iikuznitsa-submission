@@ -68,6 +68,11 @@ class TaskError extends Error {
 const changed = "vilar:tasks-changed";
 export const notifyTasks = () => window.dispatchEvent(new Event(changed));
 const apiBase = "/tracker/api/";
+function launchHeaders(): Record<string, string> {
+  const telegram = (window as Window & { Telegram?: { WebApp?: { initData?: string } } }).Telegram;
+  const launch = telegram?.WebApp?.initData || new URLSearchParams(location.hash.slice(1)).get("tgWebAppData");
+  return launch ? { Authorization: "tma " + launch } : {};
+}
 export const taskPath = (id: string) => "tasks/" + encodeURIComponent(id);
 
 export function useTaskRead<T>(path: string | null, priority = false) {
@@ -85,7 +90,7 @@ export function useTaskRead<T>(path: string | null, priority = false) {
     let retriedConflict = false;
     const read = async () => {
       try {
-        const response = await fetch(apiBase + path, { cache: "no-store", signal: controller.signal });
+        const response = await fetch(apiBase + path, { headers: launchHeaders(), redirect: "error", cache: "no-store", signal: controller.signal });
         if (controller.signal.aborted) return;
         if (priority && (response.status === 202 || (response.status === 409 && !retriedConflict))) {
           if (response.status === 409) retriedConflict = true;
@@ -155,7 +160,9 @@ function useTaskMutation() {
       const res = await fetch(apiBase + path, {
         method: "POST",
         cache: "no-store",
+        redirect: "error",
         headers: {
+          ...launchHeaders(),
           "Content-Type": "application/json",
           "Idempotency-Key": last.current.key,
         },

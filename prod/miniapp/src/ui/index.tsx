@@ -109,6 +109,8 @@ export function ListRow({ title, subtitle, status, value, valueSub, urgent, lead
       {status && <Status label={status[0]} type={status[1]} tone={status[2]} />}
     </span>
   );
+  // строка без действия — не кнопка: не реагирует на нажатие и не притворяется кликабельной
+  if (!onClick) return <div className={urgent ? "list-row-urgent" : ""} style={urgent ? undefined : { display: "block", width: "100%" }}>{row}</div>;
   // «требует решения» — тот же ряд на тёмной подложке, с охранными полями сверху и снизу
   return <button type="button" className={urgent ? "list-row-urgent" : ""} style={urgent ? undefined : { display: "block", width: "100%" }} onClick={onClick}>{row}</button>;
 }
@@ -264,6 +266,7 @@ const RING_C = 2 * Math.PI * RING_R;
 export function UndoToast({ text, onCommit, onCancel }: { text: string; onCommit: () => void; onCancel: () => void }) {
   const [left, setLeft] = useState(STEPS);
   const [out, setOut] = useState(false);
+  const [cancelled, setCancelled] = useState(false);   // нажали крестик: баранка уходит, текст меняется, тост висит и только потом улетает
   const arc = useRef<SVGCircleElement>(null);
   const stopped = useRef(false);
 
@@ -301,12 +304,19 @@ export function UndoToast({ text, onCommit, onCancel }: { text: string; onCommit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const cancel = () => leave(onCancel);
+  const CANCEL_HOLD = 1400;
+  const cancel = () => {
+    if (stopped.current) return;
+    stopped.current = true;   // отсчёт встаёт — действие на сервер не уйдёт
+    setCancelled(true);
+    buzz("light");
+    setTimeout(() => leave(onCancel), CANCEL_HOLD);
+  };
 
   return (
-    <div className={`undo-toast${out ? " is-out" : ""}`} role="status">
+    <div className={`undo-toast${out ? " is-out" : ""}${cancelled ? " is-cancelled" : ""}`} role="status">
       <div className="undo-toast__body t-body-m-medium">
-        <span className="undo-ring" aria-label={`Отмена ещё доступна: ${left}`}>
+        <span className="undo-ring" aria-hidden={cancelled} aria-label={`Отмена ещё доступна: ${left}`}>
           <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r={RING_R} fill="none" stroke="currentColor" strokeWidth="3" opacity="0.12" />
             <circle ref={arc} cx="12" cy="12" r={RING_R} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"
@@ -314,8 +324,8 @@ export function UndoToast({ text, onCommit, onCancel }: { text: string; onCommit
           </svg>
           <span className="undo-ring__num t-caption-medium">{left}</span>
         </span>
-        <span className="undo-toast__text">{text}</span>
-        <button type="button" className="undo-toast__cancel" aria-label="Отменить" onClick={cancel}><Icon name="close" size={20} /></button>
+        <span key={cancelled ? "c" : "t"} className="undo-toast__text">{cancelled ? "Действие отменено" : text}</span>
+        <button type="button" className="undo-toast__cancel" aria-label="Отменить" tabIndex={cancelled ? -1 : 0} onClick={cancel}><Icon name="close" size={20} /></button>
       </div>
     </div>
   );

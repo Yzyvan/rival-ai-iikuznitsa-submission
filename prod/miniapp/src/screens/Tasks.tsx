@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { columns as initialColumns, plural, type Task } from "../data/content";
-import { Button, IconButton, TaskCard } from "../ui";
+import { Button, Icon, IconButton, TaskCard } from "../ui";
 import { useNav } from "../nav";
 import { buzz, tick } from "../haptics";
 import { openNewTask } from "./NewTaskSheet";
 import { taskSheet } from "../data/sheets";
+import { activeCount, matches, setFilter, useFilter } from "../data/filters";
 
 // В колонке задачи всегда отсортированы по сроку — перенесённая задача сама встаёт на своё место.
 const MONTH: Record<string, number> = { ноя: 11, дек: 12 };
@@ -23,6 +24,18 @@ export function Tasks() {
   const nav = useNav();
   const [cols, setCols] = useState(() => initialColumns.map((c) => ({ ...c, tasks: [...c.tasks].sort(byDate) })));
   const [drag, setDrag] = useState<Drag | null>(null);
+  // фильтр: что видно в колонках; перенос задачи работает с видимыми задачами
+  const f = useFilter();
+  const active = activeCount(f);
+  const vis = (tasks: Task[]) => tasks.filter((t) => matches(t, f));
+  const shown = cols.reduce((n, c) => n + vis(c.tasks).length, 0);
+  const quick = [
+    { label: "Сегодня", on: f.term === "today", toggle: () => setFilter({ term: f.term === "today" ? "any" : "today" }) },
+    { label: "Эта неделя", on: f.term === "week", toggle: () => setFilter({ term: f.term === "week" ? "any" : "week" }) },
+    { label: "Поручения", on: f.kind === "assign", toggle: () => setFilter({ kind: f.kind === "assign" ? "all" : "assign", project: null }) },
+    ...(f.person ? [{ label: f.person.split(" ")[0], on: true, removable: true, toggle: () => setFilter({ person: null }) }] : []),
+    ...(f.project ? [{ label: f.project, on: true, removable: true, toggle: () => setFilter({ project: null }) }] : []),
+  ];
   const dragRef = useRef<Drag | null>(null);
   dragRef.current = drag;
   const scroller = useRef<HTMLDivElement>(null);
@@ -188,14 +201,24 @@ export function Tasks() {
     <div className="screen">
       <div className="scroll">
         <header className="header">
-          <span className="header__title t-body-l">Все задачи</span>
-          <IconButton icon="settings-sliders" label="Фильтр" />
+          <span className="header__title t-body-l">{active ? `Найдено: ${plural(shown)}` : "Все задачи"}</span>
+          <span className="flt-btn">
+            <IconButton icon="settings-sliders" label="Фильтр" onClick={() => nav("sheet:filter")} />
+            {active > 0 && <span className="flt-badge t-caption-medium">{active}</span>}
+          </span>
         </header>
+        <div className="flt-quick">
+          {quick.map((q) => (
+            <button key={q.label} type="button" className={`nt-chip t-body-m-medium${q.on ? " is-on" : ""}`} onClick={() => { tick(); q.toggle(); }}>
+              {q.label}{"removable" in q && q.removable && <Icon name="close" size={16} />}
+            </button>
+          ))}
+        </div>
         <div ref={scroller} className={`hscroll kanban pad-for-bar${drag ? " is-dragging" : ""}`} style={{ paddingTop: 16 }} onScroll={onScroll}>
           <div className="columns" style={{ width: "max-content" }}>
             {cols.map((c, ci) => {
               // куда встанет задача: место по сроку среди остальных задач колонки
-              const others = drag ? c.tasks.filter((t) => t !== drag.task) : c.tasks;
+              const others = drag ? vis(c.tasks).filter((t) => t !== drag.task) : vis(c.tasks);
               const slot = drag && drag.over === ci ? (() => { const i = others.findIndex((t) => byDate(drag.task, t) < 0); return i < 0 ? others.length : i; })() : -1;
               let k = 0;
               return (
@@ -204,10 +227,10 @@ export function Tasks() {
                   <div className="column__glow" />
                   <div className="column__head">
                     <div className="row" style={{ gap: 8 }}><span className="column__dot" /><span className="t-title-s">{c.title}</span></div>
-                    <span className="t-body-m c-secondary">{plural(c.tasks.length)}</span>
+                    <span className="t-body-m c-secondary">{plural(vis(c.tasks).length)}</span>
                   </div>
                   <Button label="Добавить" variant="secondary" size="s" fill icon="plus" onClick={() => { openNewTask(ci); nav("sheet:newtask"); }} />
-                  {c.tasks.map((t) => {
+                  {vis(c.tasks).map((t) => {
                     const ghost = drag?.task === t;
                     const line = !ghost && slot === k ? <span key="drop" data-flip={`${ci}:drop`} className="drop-line" /> : null;
                     if (!ghost) k++;

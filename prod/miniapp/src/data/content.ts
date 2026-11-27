@@ -108,27 +108,28 @@ const GLOW_BASE: Record<Load, string> = { red: "#39000d", yellow: "#895e00", gre
 export const glow = (() => { const f = `./assets/hero-glow-v3${load === "red" ? "" : `-${load}`}`; return { webm: `${f}.webm`, mp4: `${f}.mp4`, poster: `${f}-poster.jpg`, base: GLOW_BASE[load] }; })();
 
 /* ── Таски: канбан по статусам ── */
-export type Task = { date: string; title: string; assignee: string; open?: string };
+/** project — проект из формы «Новая задача»; задача без проекта — поручение */
+export type Task = { date: string; title: string; assignee: string; open?: string; project?: string };
 export const columns: { title: string; glow: string; dot: string; tasks: Task[] }[] = [
   { title: "Просрочено", glow: "#b50028", dot: "var(--status-problem-fg)", tasks: [
-    { date: "был 5 дек", title: "КП для «ТехноСтрой» на 40 лицензий", assignee: "Ольга Смирнова", open: "sheet:task1" },
+    { date: "был 5 дек", title: "КП для «ТехноСтрой» на 40 лицензий", assignee: "Ольга Смирнова", open: "sheet:task1", project: "«ТехноСтрой»" },
     { date: "был 6 дек", title: "Отчёт по e-com за ноябрь", assignee: "Анна Волкова", open: "sheet:task2" },
   ] },
   { title: "В работе", glow: "#eee65a", dot: "var(--status-attention-fg)", tasks: [
     { date: "до 8 дек", title: "Сверить прогноз декабря с CRM", assignee: "Алексей Новиков", open: "sheet:task3" },
-    { date: "до 10 дек", title: "Дорожная карта интеграции «Ромашка-Ритейл»", assignee: "Мария Лебедева", open: "sheet:task6" },
+    { date: "до 10 дек", title: "Дорожная карта интеграции «Ромашка-Ритейл»", assignee: "Мария Лебедева", open: "sheet:task6", project: "«Ромашка-Ритейл»" },
     { date: "до 12 дек", title: "Креативы январской кампании", assignee: "Дмитрий Козлов", open: "sheet:task4" },
-    { date: "до 15 дек", title: "Онбординг аккаунт-менеджера", assignee: "Екатерина Соколова", open: "sheet:task5" },
+    { date: "до 15 дек", title: "Онбординг аккаунт-менеджера", assignee: "Екатерина Соколова", open: "sheet:task5", project: "Найм AM" },
   ] },
   { title: "Новые", glow: "#ff5379", dot: "var(--status-neutral-fg)", tasks: [
-    { date: "до 11 дек", title: "Согласовать окно работ с клиентом", assignee: "Ольга Смирнова", open: "sheet:task9" },
+    { date: "до 11 дек", title: "Согласовать окно работ с клиентом", assignee: "Ольга Смирнова", open: "sheet:task9", project: "«Ромашка-Ритейл»" },
     { date: "до 21 дек", title: "План партнёрских мероприятий Q1", assignee: "Сергей Морозов", open: "sheet:task7" },
     { date: "до 22 дек", title: "Тезисы к совету директоров", assignee: "Алексей Новиков", open: "sheet:task8" },
   ] },
   { title: "Готово", glow: "#3deb8c", dot: "var(--status-done-fg)", tasks: [
-    { date: "7 дек", title: "Запрос КП от «ТехноСтрой»", assignee: "Ольга Смирнова", open: "sheet:done1" },
+    { date: "7 дек", title: "Запрос КП от «ТехноСтрой»", assignee: "Ольга Смирнова", open: "sheet:done1", project: "«ТехноСтрой»" },
     { date: "7 дек", title: "Перенос 1:1 на 14:00", assignee: "Ольга Смирнова", open: "sheet:del2" },
-    { date: "4 дек", title: "Итог встречи по интеграции", assignee: "Мария Лебедева", open: "sheet:done2" },
+    { date: "4 дек", title: "Итог встречи по интеграции", assignee: "Мария Лебедева", open: "sheet:done2", project: "«Ромашка-Ритейл»" },
   ] },
 ];
 export const plural = (n: number) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "задача" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "задачи" : "задач"}`;

@@ -3,11 +3,14 @@ import { boards, glow, load, playGlow, stages, today, userInitials, type StageId
 import { Avatar, IconButton, ListRow, LoadBadge, Mark, Section, Wordmark } from "../ui";
 import { useNav } from "../nav";
 import { whoop } from "../haptics";
+import { MailBoard, useImportedMail } from "./MailBoard";
 
 /** Доска: три этапа. Сверху на красной подложке — то, что ждёт решения, ниже — то, что Vilar сделал сам. */
 export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId) => void }) {
   const nav = useNav();
   const data = boards[stage];
+  const isMail = stage === "mail";
+  const mail = useImportedMail();
   const wrap = useRef<HTMLDivElement>(null);
   const glowBox = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -72,7 +75,9 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
                 <button key={s.id} ref={(el) => (tabRefs.current[s.id] = el)} type="button" role="tab" aria-selected={s.id === stage}
                         className={`stage-tab t-body-m-medium${s.id === stage ? " is-active" : ""}`} onClick={() => { if (s.id !== stage) whoop(); onStage(s.id); }}>
                   {s.label}
-                  {s.id !== stage && <LoadBadge count={s.count} />}
+                  {s.id !== stage && (s.id === "mail"
+                    ? mail.messages && <LoadBadge count={mail.messages.length} />
+                    : <LoadBadge count={s.count} />)}
                 </button>
               ))}
             </div>
@@ -90,18 +95,18 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
           <div className="hero">
             <div key={stage} className="hero__body stage-content" style={{ gap: 28 }}>
               <div className="hero__count">
-                <span className="t-hero-number">{data.hero.count}</span>
-                <span className="t-body-l">{data.hero.label}</span>
+                <span className="t-hero-number">{isMail ? mail.messages?.length ?? "—" : data.hero.count}</span>
+                <span className="t-body-l">{isMail ? "письма из Outlook" : data.hero.label}</span>
               </div>
               <div className="hero__rows">
-                {data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
+                {!isMail && data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
               </div>
             </div>
           </div>
         </div>
 
         <div key={stage} className="board-sheet stage-content">
-          {data.sections.map((s) => (
+          {isMail ? <MailBoard mail={mail} /> : data.sections.map((s) => (
             <Section key={s.title} title={s.title} vilar={s.vilar}>
               {s.rows.map((r) => <ListRow key={r.title} urgent={r.urgent} title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
             </Section>

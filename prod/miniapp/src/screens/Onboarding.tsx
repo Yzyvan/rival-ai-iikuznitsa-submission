@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { glow, playGlow } from "../data/content";
 import { Button, Icon, Tag, Tags, Toggle, VilarHint, VilarMessage } from "../ui";
 import { buzz, buzzSent, tick, whoop } from "../haptics";
-import { OutlookConnections } from "./OutlookConnections";
 import { FloatField } from "./NewTaskSheet";
 
 /* Первый вход: регистрация на подложке прелоудера (ряд «§ Первый вход» в Figma).
@@ -85,8 +84,18 @@ const KINDS = [
 const BUDGET = ["20 тыс. ₽", "100 тыс. ₽", "Любая", "Другое"];
 const DISCOUNT = ["5%", "10%", "Любая", "Другое"];
 const IMPORTANCE = ["Очень важно", "Важно и выше", "Средне и выше", "Любая"];
-const LEADS = ["за 30 мин", "за 1 час", "за 2 часа", "Зависит от проекта"];
-const LEAD_MIN = [30, 60, 120, 60];
+const LEADS = ["за 15 мин", "за 30 мин", "за 1 час", "Другое"];
+const LEAD_MIN = [15, 30, 60];
+const MEET_KINDS = [
+  { title: "Встречи с партнёрами", sub: "Партнёрский канал, четверг 15:00", on: true },
+  { title: "Встречи с клиентами", sub: "«Ромашка-Ритейл», «ТехноСтрой»", on: true },
+  { title: "Комитеты и советы", sub: "бюджет, совет директоров", on: true },
+  { title: "Планёрки и 1:1", sub: "с командой", on: false },
+];
+/** Встречи завтрашнего дня и их тип (индекс в MEET_KINDS) — для последнего экрана */
+const TOMORROW: [from: number, to: number, title: string, kind: number][] = [
+  [600, 660, "Планёрка e-com", 3], [720, 750, "1:1 с Ольгой", 3], [900, 960, "Встреча с партнёром", 0], [990, 1050, "Комитет по бюджету Q1", 2],
+];
 const CONSEQ = [
   { title: "Сорвём срок клиенту", sub: "например, пилот «Ромашка-Ритейл» 11 декабря" },
   { title: "Команда будет ждать", sub: "коллеги не начнут работу без вашего решения" },
@@ -100,12 +109,15 @@ const NOTIFY = [
   { title: "В сводке", sub: "вечером, одним списком" },
 ];
 const AUTH_PROJECTS = ["«Ромашка-Ритейл»", "«ТехноСтрой»", "Партнёрский канал"];
-const ACTIONS = ["Переносы встреч", "Напоминания", "Условия клиенту"];
-const ACTION_GEN = ["переносы встреч", "напоминания исполнителям", "изменения условий клиенту"];
-const MODES = ["Только предложить", "Спросить перед выполнением", "Выполнить и сообщить"];
+const ACTIONS = ["Переносы встреч", "Напоминания исполнителям", "Изменения условий клиенту"];
+const MODES = ["Предложить", "Спросить", "Сделать сам"];
+const VERB = ["только предлагаю", "сначала согласую с вами", "делаю сам и сообщаю"];
+const plural = (n: number, one: string, few: string, many: string) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
+const NUM = ["ни одной", "одной", "двум", "трём", "четырём"];
 
 const hhmm = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
-const lower = (s: string) => s[0].toLowerCase() + s.slice(1);
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+const joinAnd = (a: string[]) => (a.length < 2 ? a.join("") : `${a.slice(0, -1).join(", ")} и ${a[a.length - 1]}`);
 
 /** Шаги: заголовок, подзаголовок, номер точки в степпере */
 const SCREENS = [
@@ -113,12 +125,12 @@ const SCREENS = [
   { title: "Найденные проекты", sub: "Отметьте, что из этого сейчас в работе", step: 1 },
   { title: "Важность проектов", sub: "От этого зависит, с чем я прихожу к вам, а что решаю сам", step: 1 },
   { title: "Виды работы", sub: "Какие из этих дел требуют вашего времени?", step: 1 },
-  { title: "Когда приходить к вам", sub: "Остальное решаю сам и сообщаю в вечерней сводке", step: 1 },
-  { title: "Подготовка", sub: "Встречи с партнёрами", step: 2 },
+  { title: "Что делать не смогу", sub: "Остальное решаю сам и сообщаю в вечерней сводке", step: 1 },
+  { title: "Резюме перед встречей", sub: "Пришлю, кто будет, о чём договорились в прошлый раз и что нужно решить", step: 2 },
   { title: "Что пострадает", sub: "Если вы ответите партнёру только после встречи — чем это грозит?", step: 2 },
-  { title: "Когда сообщить", sub: "Если после вашей встречи подходящего окна уже не останется", step: 2 },
-  { title: "Что Vilar может сам", sub: "Выберите проект и действие — и как мне поступать", step: 3 },
-  { title: "План на завтра", sub: "Подготовку я поставил в свободное окно", step: 4 },
+  { title: "Когда вам писать", sub: "Если после вашей встречи подходящего окна уже не останется", step: 2 },
+  { title: "Что Vilar делает сам", sub: "Как поступать с каждым видом действий — для всех проектов и отдельно", step: 3 },
+  { title: "Всё готово", sub: "Так я помогу вам завтра", step: 4 },
 ];
 
 export function Onboarding({ active, onDone }: { active: boolean; onDone: () => void }) {
@@ -137,6 +149,7 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
   };
 
   // состояние ответов
+  const [outlook, setOutlook] = useState(false);
   const [projects, setProjects] = useState(PROJECTS);
   const [proj, setProj] = useState(PROJECTS.map((p) => p.status));
   const active3 = projects.map((p, k) => ({ ...p, k })).filter((p) => proj[p.k] === 0);
@@ -150,15 +163,31 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
   const [budgetOwn, setBudgetOwn] = useState(""), [discOwn, setDiscOwn] = useState("");
   const [budget, setBudget] = useState(0), [disc, setDisc] = useState(1), [impMin, setImpMin] = useState(1);
   const [always, setAlways] = useState([true, true]);
-  const [mins, setMins] = useState("40"), [oneBlock, setOneBlock] = useState(true), [lead, setLead] = useState(1);
+  const [lead, setLead] = useState(1), [leadOwn, setLeadOwn] = useState("");
+  const [meetKinds, setMeetKinds] = useState(MEET_KINDS.map((k) => k.on));
   const [conseq, setConseq] = useState([true, true, false, false, false]);
   const [notify, setNotify] = useState(1);
-  const [ap, setAp] = useState(0), [act, setAct] = useState(0);
-  const [modes, setModes] = useState<Record<string, number>>({ "0:0": 1 });
-  const mode = modes[`${ap}:${act}`] ?? 2;
-
-  const m = Math.max(10, Math.min(240, parseInt(mins, 10) || 40));
-  const end = 15 * 60 - LEAD_MIN[lead], start = end - m;
+  // полномочия: общий режим для всех проектов и отличия по проектам (null — как для всех)
+  const [allModes, setAllModes] = useState([2, 2, 1]);
+  const [own, setOwn] = useState<(number | null)[][]>([[1, null, null], [null, null, null], [null, null, null]]);
+  const [open, setOpen] = useState<number | null>(0);
+  const modeOf = (p: number, a: number) => own[p][a] ?? allModes[a];
+  const setMode = (p: number | null, a: number, v: number) => {
+    if (p === null) setAllModes((m) => m.map((x, k) => (k === a ? v : x)));
+    else setOwn((o) => o.map((r, k) => (k === p ? r.map((x, j) => (j === a ? (v === allModes[a] ? null : v) : x)) : r)));
+  };
+  const differs = (p: number, a: number) => own[p][a] !== null && own[p][a] !== allModes[a];
+  const diffs = (p: number) => ACTIONS.filter((_, a) => differs(p, a)).length;
+  const diffLabel = (p: number) => (diffs(p) ? `${diffs(p)} ${plural(diffs(p), "отличие", "отличия", "отличий")}` : "как для всех");
+  const authSummary = (() => {
+    const byMode = [2, 1, 0].map((v) => [v, ACTIONS.filter((_, a) => allModes[a] === v).map((t) => t.toLowerCase())] as const).map(([v, acts]) => (acts.length ? `${joinAnd([...acts])} ${VERB[v]}` : "")).filter(Boolean);
+    const ex = AUTH_PROJECTS.map((p, k) => { const d = ACTIONS.map((t, a) => (differs(k, a) ? `${t.toLowerCase()} ${VERB[own[k][a]!]}` : "")).filter(Boolean); return d.length ? `В ${p} ${joinAnd(d)}.` : ""; }).filter(Boolean);
+    return `${cap(byMode.join(", "))}.${ex.length ? " " + ex.join(" ") : ""}`;
+  })();
+  const leadMin = lead < 3 ? LEAD_MIN[lead] : Math.max(5, Math.min(240, parseInt(leadOwn, 10) || 30));
+  const leadText = lead < 3 ? LEADS[lead] : `за ${leadMin} мин`;
+  const resumeAt = (from: number) => hhmm(from - leadMin);
+  const withResume = TOMORROW.filter(([, , , k]) => meetKinds[k]);
   const nKinds = kinds.filter(Boolean).length + 1;   // + «Совет директоров» — редкое, но важное
   const alwaysList = ["письма руководству", "обязательства клиентам"].filter((_, k) => always[k]);
   const money = (v: string) => Number(v).toLocaleString("ru-RU");
@@ -167,17 +196,29 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
     disc < 2 ? `скидка больше ${DISCOUNT[disc]}` : disc === 3 && discOwn ? `скидка больше ${discOwn}%` : "любая скидка",
     ["проект «очень важно»", "проект «важно» и выше", "проект «средне» и выше", "любой проект"][impMin],
   ];
-  const modeLine = (k: number) => k === 0 ? "только предложу и ничего не сделаю сам" : k === 1 ? "сначала согласую с вами" : "сделаю сам и сообщу";
 
   const s = SCREENS[i];
   let content: ReactNode;
   switch (i) {
     case 0: content = (<>
-      <div className="onb-card onb-card--row">
-        <img src="./assets/logos/telegram.svg" width={32} height={32} alt="" />
-        <span className="list-row__text"><span className="t-body-l">Telegram</span><span className="t-body-m c-secondary">Бот и мини-апп Vilar</span></span>
+      {[["telegram", "Telegram", "приходят решения и сводки"], ["outlook-calendar", "Календарь Outlook", "для анализа встреч и свободных окон"]].map(([logo, t, sub]) => (
+        <div key={t} className="onb-card onb-card--row">
+          <img src={`./assets/logos/${logo}.svg`} width={32} height={32} alt="" />
+          <span className="list-row__text"><span className="t-body-l">{t}</span><span className="t-body-m c-secondary">{sub}</span></span>
+          <span className="status status--done-dark"><Icon name="check-circle" size={18} /></span>
+        </div>
+      ))}
+      <div className="onb-card">
+        <div className="onb-card--row">
+          <img src="./assets/logos/outlook.svg" width={32} height={32} alt="" />
+          <span className="list-row__text"><span className="t-body-l">Почта Outlook</span><span className="t-body-m c-secondary">читать почту; отвечаю от вашего имени только после подтверждения</span></span>
+          {outlook && <span className="status status--done-dark onb-pop"><Icon name="check-circle" size={18} /></span>}
+        </div>
+        {outlook
+          ? <div className="btn btn--secondary btn--s btn--fill is-static">Почта подключена</div>
+          : <Button label="Войти в Microsoft" variant="secondary" size="s" fill onClick={() => { buzz("light"); setOutlook(true); }} />}
       </div>
-      <OutlookConnections />
+      <VilarHint text={outlook ? "дела из писем соберу сам" : "без почты тоже можно — дела добавите вручную"} />
       <Button label="Дальше" fill onClick={next} />
     </>); break;
     case 1: content = (<>
@@ -231,13 +272,15 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
       <Button label="Сохранить правила" fill onClick={next} />
     </>); break;
     case 5: content = (<>
-      <Label>Сколько минут вы обычно готовитесь?</Label>
-      <FloatField label="Минуты" inputMode="numeric" value={mins} onChange={(v) => setMins(v.replace(/\D/g, "").slice(0, 3))} />
-      <ToggleCard title="Нужен один свободный блок" sub="не дробить подготовку на куски" on={oneBlock} onChange={setOneBlock} />
-      <Label>За сколько до встречи закончить?</Label>
+      <Label>За сколько до встречи прислать</Label>
       <Chips items={LEADS} at={lead} onPick={setLead} />
+      {lead === 3 && <FloatField label="Минуты до встречи" inputMode="numeric" value={leadOwn} onChange={(v) => setLeadOwn(v.replace(/\D/g, "").slice(0, 3))} autoFocus />}
+      <Label>Для каких встреч</Label>
+      {MEET_KINDS.map((k, n) => <ToggleCard key={k.title} title={k.title} sub={k.sub} on={meetKinds[n]} onChange={(v) => setMeetKinds((a) => a.map((x, j) => (j === n ? v : x)))} />)}
       <Divider />
-      <VilarMessage text={`Итог: ${m} минут${oneBlock ? " подряд" : ""}, закончить ${LEADS[lead === 3 ? 1 : lead]} до встречи. Для четверга в 15:00 — с ${hhmm(start)} до ${hhmm(end)}.`} />
+      <VilarMessage text={meetKinds[0]
+        ? `Перед встречей с партнёром в 15:00 пришлю резюме в ${resumeAt(900)}: кто будет, что обещали в прошлый раз и какое решение от вас ждут.`
+        : meetKinds.some(Boolean) ? `Резюме пришлю ${leadText} до начала: кто будет, что обещали в прошлый раз и какое решение от вас ждут.` : "Резюме перед встречами присылать не буду — включите хотя бы один вид встреч."} />
       <Button label="Сохранить" fill onClick={next} />
     </>); break;
     case 6: content = (<>
@@ -251,26 +294,44 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
       <Button label="Сохранить" fill onClick={next} />
     </>); break;
     case 8: content = (<>
-      <Label>Проект</Label>
-      <Chips items={AUTH_PROJECTS} at={ap} onPick={setAp} />
-      <Label>Действие</Label>
-      <Chips items={ACTIONS} at={act} onPick={setAct} />
-      <Label>Режим</Label>
-      {MODES.map((o, n) => <Option key={o} title={o} on={mode === n} onClick={() => setModes((r) => ({ ...r, [`${ap}:${act}`]: n }))} />)}
+      <Label>Для всех проектов</Label>
+      <div className="onb-card onb-card--gap12">
+        {ACTIONS.map((t, a) => (
+          <div key={t} className="onb-action"><span className="t-body-l">{t}</span><Chips items={MODES} at={allModes[a]} spread onPick={(v) => setMode(null, a, v)} /></div>
+        ))}
+      </div>
+      <Label>Отдельно для проектов</Label>
+      {AUTH_PROJECTS.map((p, k) => open === k ? (
+        <div key={p} className="onb-card onb-card--gap12">
+          <button type="button" className="onb-head onb-head--btn" onClick={() => { tick(); setOpen(null); }}><span className="t-body-l">{p}</span><Tag label={diffLabel(k)} /></button>
+          {ACTIONS.map((t, a) => (
+            <div key={t} className="onb-action"><span className="t-body-l">{t}{differs(k, a) ? " · не как для всех" : ""}</span><Chips items={MODES} at={modeOf(k, a)} spread onPick={(v) => setMode(k, a, v)} /></div>
+          ))}
+        </div>
+      ) : (
+        <button key={p} type="button" className="onb-opt" onClick={() => { tick(); setOpen(k); }}>
+          <span className="list-row__text"><span className="t-body-l">{p}</span><span className="t-body-m c-secondary">{diffLabel(k)}</span></span>
+          <Icon name="chevron-right" size={20} />
+        </button>
+      ))}
       <Divider />
-      <VilarMessage text={`В ${AUTH_PROJECTS[ap]} ${ACTION_GEN[act]} — ${modeLine(mode)}.`} />
-      <Button label="Сохранить правило" fill onClick={next} />
+      <VilarMessage text={authSummary} />
+      <Button label="Сохранить правила" fill onClick={next} />
     </>); break;
     default: content = (<>
-      <VilarMessage text={`Подготовку к встрече с партнёром поставил на ${hhmm(start)}–${hhmm(end)} — закончите ${lower(LEADS[lead === 3 ? 1 : lead])} до начала.`} />
+      <VilarMessage text={`Завтра ${TOMORROW.length} ${plural(TOMORROW.length, "встреча", "встречи", "встреч")}. ${withResume.length ? `Резюме пришлю к ${NUM[withResume.length] ?? withResume.length} — ${leadText} до начала.` : "Резюме не пришлю: все виды встреч выключены."}`} />
       <div className="onb-day">
-        {[["10:00–11:00", "Планёрка e-com"], ["12:00–12:30", "1:1 с Ольгой"], [`${hhmm(start)}–${hhmm(end)}`, "Подготовка к встрече с партнёром", "new"], ["15:00–16:00", "Встреча с партнёром"]]
-          .sort((a, b) => parseInt(a[0]) * 60 + parseInt(a[0].split(":")[1]) - (parseInt(b[0]) * 60 + parseInt(b[0].split(":")[1])))
-          .map(([t, w, isNew]) => <div key={t + w} className={`onb-slot${isNew ? " is-new" : ""}`}><span className="t-body-m">{t}</span><span className="t-body-l">{w}</span></div>)}
+        {TOMORROW.map(([from, to, title, k]) => (
+          <div key={title} className="onb-slot">
+            <span className="t-body-m">{hhmm(from)}–{hhmm(to)}</span>
+            <span className="t-body-l onb-slot__what">{title}</span>
+            {meetKinds[k] && <span className="t-caption-medium c-brand">резюме в {resumeAt(from)}</span>}
+          </div>
+        ))}
       </div>
       <div className="onb-actions">
-        <Button label="Изменить подготовку" variant="secondary" fill onClick={() => { setBack(9); go(5); }} />
-        <Button label="Подходит" fill onClick={finish} />
+        <Button label="Изменить время резюме" variant="secondary" fill onClick={() => { setBack(9); go(5); }} />
+        <Button label="Начать" fill onClick={finish} />
       </div>
     </>);
   }

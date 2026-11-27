@@ -32,7 +32,7 @@ const PEOPLE: Person[] = [
   { name: "Наталья Павлова", tags: ["финансы"] },
   { name: "Игорь Фёдоров", tags: ["HR"] },
 ];
-const PROJECTS = [
+export const PROJECTS = [
   { name: "«Ромашка-Ритейл»", lead: "Мария Лебедева" },
   { name: "«ТехноСтрой»", lead: "Ольга Смирнова" },
   { name: "Бюджет Q1", lead: "Наталья Павлова" },
@@ -165,7 +165,7 @@ export function NewTaskSheet({ onClose, onToast }: { onClose: () => void; onToas
     const t = title.trim();
     if ((kind === "project" || kind === "assign") && day) {
       const due = `до ${day.getDate()} ${MONTHS_SHORT[day.getMonth()]}`;
-      onToastCommit(() => window.dispatchEvent(new CustomEvent("vilar:task", { detail: { column: targetColumn, task: { date: due, title: t, assignee: people[0] } } })));
+      onToastCommit(() => window.dispatchEvent(new CustomEvent("vilar:task", { detail: { column: targetColumn, task: { date: due, title: t, assignee: people[0], ...(kind === "project" && project !== null ? { project: PROJECTS[project].name } : {}) } } })));
     }
     close(() => onToast(kind === "meeting" ? "t14" : kind === "self" ? "t15" : kind === "assign" ? "t16" : "t13"));
   };
