@@ -32,8 +32,11 @@ recorded ID, resource, callback and change type before deletion and verifies a
 provider 404 before removing the local subscription record.
 
 The temporary rule uses the exact existing URL with ?vilar_mail_pilot=1.
-preflight reads the authenticated user and subscription inventory without writing
-local state. The app ID comes from MS365_MCP_CLIENT_ID or the existing calendar
+preflight verifies the pinned mailbox and reads the complete subscription inventory
+without writing local state. For the existing stand set VILAR_MAIL_CALENDAR_REFERENCE
+to /var/lib/vilar-calendar-notify/subscription.json. The adapter verifies its exact
+Graph ID, live expiry, resource and unmarked URL and uses its creator and application
+without reading the user profile or requesting extra access. The app ID comes from MS365_MCP_CLIENT_ID or the existing calendar
 rule on the unmarked URL for the same user. A foreign or ambiguous rule, missing
 ownership evidence or an incomplete inventory stops the request.
 subscribe defaults to 45 minutes. Override with --ttl-minutes (45 through 720).

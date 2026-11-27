@@ -182,10 +182,12 @@ def main():
     parser.add_argument("--ttl-minutes", type=int, default=45)
     args = parser.parse_args()
     os.umask(0o077)
+    anchor_path = os.getenv("VILAR_MAIL_CALENDAR_REFERENCE")
+    anchor = Path(anchor_path) if anchor_path else None
     if args.command == "preflight":
         from mail_subscription import prepare
         _, match = prepare(graph, os.environ["VILAR_MAIL_CALLBACK"], RESOURCE, CALLBACK,
-                           os.getenv("MS365_MCP_CLIENT_ID"), os.environ["VILAR_OUTLOOK_ACCOUNT"].lower())
+                           os.getenv("MS365_MCP_CLIENT_ID"), os.environ["VILAR_OUTLOOK_ACCOUNT"].lower(), anchor)
         print(json.dumps({"status": "matched" if match else "vacant"}))
         return
     directory = Path(os.environ["VILAR_MAIL_PUSH_DIR"])
@@ -220,7 +222,7 @@ def main():
                 from mail_subscription import manage
                 result = manage(graph, subscription, args.command, args.expected_id,
                                 os.environ["VILAR_MAIL_CALLBACK"], os.environ["VILAR_MAIL_CLIENT_STATE"],
-                                account, os.getenv("MS365_MCP_CLIENT_ID"), args.ttl_minutes, RESOURCE, CALLBACK)
+                                account, os.getenv("MS365_MCP_CLIENT_ID"), args.ttl_minutes, RESOURCE, CALLBACK, anchor)
                 print(json.dumps({k: result[k] for k in ("id","expirationDateTime","status") if k in result}))
 
 

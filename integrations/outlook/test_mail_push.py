@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock
 
 from mail_push import database, initialize, process_one, queue_notifications
-from mail_subscription import manage
+from mail_subscription import manage, prepare
 
 
 class MailPushContractTest(unittest.TestCase):
@@ -40,6 +40,26 @@ class MailPushContractTest(unittest.TestCase):
         self.assertEqual(core.submit.call_args.args[0], event)
         self.assertTrue(core.submit.call_args.args[1])
         core.read.assert_called_once_with(receipt["event_id"])
+
+    def test_calendar_reference_verifies_mailbox_without_profile_read(self):
+        base = "https://example.test/vilar/hooks/outlook-calendar"
+        anchor = dict(id="calendar-id", resource="/me/events", applicationId="app", creatorId="owner",
+                      notificationUrl=base, expirationDateTime="2100-01-01T00:00:00Z")
+        with tempfile.TemporaryDirectory() as directory:
+            ref = Path(directory) / "calendar.json"
+            ref.write_text('{"id":"calendar-id"}')
+            def read(row):
+                provider = Mock(return_value={"value":[row]})
+                identity, match = prepare(provider, base+"?vilar_mail_pilot=1", "inbox",
+                                          "/vilar/hooks/outlook-calendar", "app", "owner@example.test", ref)
+                provider.assert_called_once_with("list")
+                self.assertIsNone(match)
+                return identity
+            self.assertEqual(read(anchor)["creatorId"], "owner")
+            for change in ({"id":"other"},{"creatorId":None},{"applicationId":"other"},
+                           {"expirationDateTime":"2000-01-01T00:00:00Z"},{"resource":"mail"}):
+                with self.assertRaises(ValueError):
+                    read({**anchor, **change})
 
     def test_subscription_recovery_and_precise_removal(self):
         callback = "https://example.test/vilar/hooks/outlook-calendar?vilar_mail_pilot=1"

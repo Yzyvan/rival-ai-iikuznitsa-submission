@@ -19,27 +19,42 @@ def durable_write(path, text):
         os.close(fd)
 
 
-def prepare(provider, callback, resource, route, configured_app, account):
+def prepare(provider, callback, resource, route, configured_app, account, calendar_ref=None):
     url = urlsplit(callback)
     if (url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment
             or url.path != route or url.query != "vilar_mail_pilot=1"):
         raise ValueError("exact marked pilot HTTPS callback required")
-    me = provider("me", select="id")
-    creator = me.get("id")
-    if not creator:
-        raise ValueError("provider could not identify the authenticated mailbox")
     page = provider("list")
     if page.get("@odata.nextLink") or not isinstance(page.get("value"), list):
         raise ValueError("incomplete subscription inventory")
     rows = page["value"]
     bare = urlunsplit(url._replace(query=""))
-    if not configured_app:
-        calendar_apps = {r.get("applicationId") for r in rows
-                         if r.get("notificationUrl") == bare and r.get("creatorId") == creator
-                         and r.get("resource","").strip("/").lower() == "me/events"}
-        if len(calendar_apps) != 1 or not all(calendar_apps):
-            raise ValueError("could not verify application from current calendar connection")
-        configured_app = calendar_apps.pop()
+    if calendar_ref:
+        # The current mailbox's calendar service persists this exact Graph ID.
+        anchor_id = json.loads(calendar_ref.read_text())["id"]
+        anchors = [r for r in rows if r.get("id") == anchor_id and r.get("notificationUrl") == bare
+                   and r.get("resource", "").strip("/").lower() == "me/events"]
+        if len(anchors) != 1:
+            raise ValueError("current mailbox calendar reference does not match the Graph inventory")
+        anchor = anchors[0]
+        expiry = datetime.fromisoformat(anchor["expirationDateTime"].replace("Z", "+00:00"))
+        creator = anchor.get("creatorId")
+        app_id = anchor.get("applicationId")
+        if (expiry <= datetime.now(timezone.utc) or not creator or not app_id
+                or (configured_app and app_id != configured_app)):
+            raise ValueError("calendar anchor expired or failed ownership verification")
+        configured_app = app_id
+    else:
+        creator = provider("me", select="id").get("id")
+        if not creator:
+            raise ValueError("provider could not identify the authenticated mailbox")
+        if not configured_app:
+            calendar_apps = {r.get("applicationId") for r in rows
+                             if r.get("notificationUrl") == bare and r.get("creatorId") == creator
+                             and r.get("resource","").strip("/").lower() == "me/events"}
+            if len(calendar_apps) != 1 or not all(calendar_apps):
+                raise ValueError("could not verify application from current calendar connection")
+            configured_app = calendar_apps.pop()
     identity = dict(applicationId=configured_app, creatorId=creator, notificationUrl=callback,
                     resource=resource, changeType="created", account=account)
     matches = [r for r in rows if r.get("notificationUrl") == callback]
@@ -55,7 +70,7 @@ def belongs(rule, identity):
                     ("changeType", "applicationId", "creatorId", "notificationUrl")))
 
 
-def manage(provider, record, command, expected, callback, state, account, app, minutes, resource, route):
+def manage(provider, record, command, expected, callback, state, account, app, minutes, resource, route, calendar_ref=None):
     if not 45 <= minutes <= 720 or len(state) < 32:
         raise ValueError("invalid lifetime or client state")
     intent = record.with_name("subscription-intent.json")
@@ -64,7 +79,7 @@ def manage(provider, record, command, expected, callback, state, account, app, m
         return {"status": "no_owned_subscription"}
     if command in ("recover", "renew", "unsubscribe") and not saved:
         raise ValueError("no recorded creation intent; subscription ownership is unproven")
-    identity, match = prepare(provider, callback, resource, route, app, account)
+    identity, match = prepare(provider, callback, resource, route, app, account, calendar_ref)
     if saved and saved["identity"] != identity:
         raise ValueError("mailbox or callback changed since the original request")
     local_id = record.read_text().strip() if record.exists() else None

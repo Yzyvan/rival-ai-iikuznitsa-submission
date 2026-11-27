@@ -18,16 +18,28 @@ try {
   }));
   const result = await client.callTool({name: tool, arguments: request.args});
   if (result.isError) {
+    const status = result._meta?.http_status;
+    const message = result.content?.[0]?.text || "";
+    const category = /account mismatch|unexpected account|expected username/i.test(message) ? "account_mismatch"
+      : /invalid.grant|interaction.required|authentication.required|login|unauthenticated/i.test(message) ? "authorization"
+      : /scope|permission|access.denied/i.test(message) ? "permissions"
+      : /arguments|parameters|schema/i.test(message) ? "parameters"
+      : /tool.*not found|not.*available/i.test(message) ? "tool_unavailable" : "provider";
+
     if (request.operation === "inspect" && result._meta?.http_status === 404) {
       process.stdout.write("null");
     } else {
-      throw new Error("provider refused");
+      process.stderr.write("Outlook read error: " + category +
+        (Number.isInteger(status) && status >= 100 && status < 600 ? " HTTP " + status : "") + "\n");
+      process.exitCode = 1;
     }
   } else {
     process.stdout.write(request.operation === "remove" ? "{}" : result.content[0].text);
   }
-} catch {
-  process.stderr.write("Outlook operation failed\n");
+} catch (err) {
+  const kind = /not found|unknown tool/i.test(err.message) ? "tool_unavailable"
+    : /closed|connect|spawn|ENOENT|denied/i.test(err.message) ? "transport" : "client";
+  process.stderr.write("Outlook call failed: " + kind + "\n");
   process.exitCode = 1;
 } finally {
   await client.close();
