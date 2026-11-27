@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { fetchBoardData } from "../api/mailBoard";
+import { fetchBoardData, isBrowserTest } from "../api/mailBoard";
 import { ListRow, Section } from "../ui";
 import { SheetView } from "./SheetView";
 
@@ -101,7 +101,7 @@ export function CalendarBoard({ meetings, error, selected, select, decide }: Cal
         tags: [...schedule(selected).split(" · "), "Outlook"],
         status: needsChoice(selected) ? [when, "Внимание", "Яркая"] : undefined,
         msg: needsChoice(selected) ? "В приглашении есть ссылка на Телемост. Я могу пойти на встречу вместо вас. Кто пойдёт?" : undefined,
-        actions: needsChoice(selected) ? [["Поручить Vilar", "primary", "delegate"], ["Иду сам", "secondary", "personal"]]
+        actions: needsChoice(selected) && !isBrowserTest ? [["Поручить Vilar", "primary", "delegate"], ["Иду сам", "secondary", "personal"]]
           : [["Закрыть", "ghost", "close"]],
       }} onDecision={decide} onAction={() => select(null)} />,
       document.querySelector(".app")!,

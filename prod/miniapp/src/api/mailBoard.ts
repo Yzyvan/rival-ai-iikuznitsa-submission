@@ -30,8 +30,14 @@ const browserTestCode = (() => {
   return code;
 })();
 
+function telegramLaunch() {
+  return new URLSearchParams(location.hash.slice(1)).get("tgWebAppData") || telegramWebApp()?.initData;
+}
+
+export const isBrowserTest = Boolean(browserTestCode && !telegramLaunch());
+
 export async function fetchBoardData(path: string, signal?: AbortSignal, body?: object) {
-  const launch = new URLSearchParams(location.hash.slice(1)).get("tgWebAppData") || telegramWebApp()?.initData;
+  const launch = telegramLaunch();
   const authorization = launch ? "tma " + launch : browserTestCode && "vilar-test " + browserTestCode;
   if (!authorization) throw new TelegramLaunchError("Откройте Vilar по тестовой ссылке или через меню бота @vilar_ai_bot.");
 
