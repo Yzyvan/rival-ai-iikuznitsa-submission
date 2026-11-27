@@ -6,9 +6,11 @@ import { TabBar, UndoToast, type TabId } from "./ui";
 import { Preloader } from "./screens/Preloader";
 import { Onboarding, needOnboarding } from "./screens/Onboarding";
 import { Board } from "./screens/Board";
-import { Tasks, TaskBindingsProvider } from "../../../integrations/tracker/src";
+import { Tasks } from "./screens/Tasks";
+import { Tasks as TrackerTasks, TaskBindingsProvider } from "../../../integrations/tracker/src";
 import { trackerBindings } from "../../../integrations/tracker/transport/bindings";
 import "../../../integrations/tracker/src/style.css";
+const showTracker = new URLSearchParams(window.location.search).get("tracker") === "1";
 const standBindings = { ...trackerBindings, priorities: undefined };
 import { Stats } from "./screens/Stats";
 import { SheetView } from "./screens/SheetView";
@@ -114,7 +116,9 @@ export function App() {
       <div className="app">
         {/* раздел меню рисуется всегда — вложенный экран ложится сверху (и может раскрыться кругом из кнопки) */}
         {tab === "board" && <Board stage={stage} onStage={setStage} />}
-        {tab === "tasks" && <TaskBindingsProvider bindings={standBindings}><Tasks /></TaskBindingsProvider>}
+        {tab === "tasks" && (showTracker
+          ? <TaskBindingsProvider bindings={standBindings}><TrackerTasks /></TaskBindingsProvider>
+          : <Tasks />)}
         {tab === "stats" && <Stats />}
         <TabBar active={tab} onChange={changeTab} />
         {top && nested[top.id] && (
