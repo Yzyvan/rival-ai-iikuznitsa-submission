@@ -1,4 +1,4 @@
-import { CalendarBoard, useCalendar } from "./CalendarBoard";
+import { CalendarBoard, CalendarDecisions, useCalendar } from "./CalendarBoard";
 import { useLayoutEffect, useRef, useState } from "react";
 import { boards, glow, load, playGlow, stages, today, userInitials, type StageId } from "../data/content";
 import { Avatar, IconButton, ListRow, LoadBadge, Mark, Section, Wordmark } from "../ui";
@@ -11,7 +11,11 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
   const nav = useNav();
   const data = boards[stage];
   const isCalendar = stage === "meetings";
-  const calendar = useCalendar(isCalendar);
+  const calendar = useCalendar(true);
+  const hero = isCalendar && calendar.pending.length ? {
+    base: "#39000d", poster: "./assets/hero-glow-v3-poster.jpg",
+    webm: "./assets/hero-glow-v3.webm", mp4: "./assets/hero-glow-v3.mp4"
+  } : glow;
   const isMail = stage === "mail";
   const mail = useImportedMail();
   const wrap = useRef<HTMLDivElement>(null);
@@ -80,7 +84,7 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
                   {s.label}
                   {s.id !== stage && (s.id === "mail"
                     ? mail.messages && <LoadBadge count={mail.messages.length} />
-                    : s.id === "meetings" ? calendar.meetings && <LoadBadge count={calendar.meetings.length} /> : <LoadBadge count={s.count} />)}
+                    : s.id === "meetings" ? calendar.meetings && <LoadBadge count={calendar.pending.length} /> : <LoadBadge count={s.count} />)}
                 </button>
               ))}
             </div>
@@ -88,20 +92,21 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
 
           {/* единая фигура: вкладка + красная подложка; фон — видео с анимированным градиентом.
               При смене этапа вкладка переезжает (меняется контур), видео не перезапускается. */}
-          <div ref={glowBox} className="hero-glow" data-load={load} style={{ top: 12, bottom: -40, clipPath: clip || undefined, backgroundImage: `url(${glow.poster})` }}>
-            <video ref={playGlow} disablePictureInPicture controls={false} autoPlay muted loop playsInline preload="auto" poster={glow.poster} aria-hidden="true">
-              <source src={glow.webm} type="video/webm" />
-              <source src={glow.mp4} type="video/mp4" />
+          <div ref={glowBox} className="hero-glow" data-load={isCalendar && calendar.pending.length ? "red" : load} style={{ top: 12, bottom: -40, clipPath: clip || undefined, backgroundImage: `url(${hero.poster})` }}>
+            <video ref={playGlow} disablePictureInPicture controls={false} autoPlay muted loop playsInline preload="auto" poster={hero.poster} aria-hidden="true">
+              <source src={hero.webm} type="video/webm" />
+              <source src={hero.mp4} type="video/mp4" />
             </video>
           </div>
 
           <div className="hero">
             <div key={stage} className="hero__body stage-content" style={{ gap: 28 }}>
               <div className="hero__count">
-                <span className="t-hero-number">{isMail ? mail.messages?.length ?? "—" : isCalendar ? calendar.meetings?.length ?? "—" : data.hero.count}</span>
-                <span className="t-body-l">{isMail ? "письма из Outlook" : isCalendar ? "Встречи из Outlook" : data.hero.label}</span>
+                <span className="t-hero-number">{isMail ? mail.messages?.length ?? "—" : isCalendar ? (calendar.meetings ? calendar.pending.length : "—") : data.hero.count}</span>
+                <span className="t-body-l">{isMail ? "письма из Outlook" : isCalendar ? (calendar.pending.length === 1 ? "решение по встрече" : "решения по встречам") : data.hero.label}</span>
               </div>
               <div className="hero__rows">
+                {isCalendar && <CalendarDecisions {...calendar} />}
                 {!isMail && !isCalendar && data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
               </div>
             </div>
