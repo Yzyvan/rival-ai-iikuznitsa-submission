@@ -168,7 +168,7 @@ class GroqTranscriber(Transcriber):
         if "text" not in payload:
             raise STTError(f"Groq STT response without text: {raw[:500]}")
         value = payload["text"]
-        return "" if value is None else str(value)
+        return "" if value is None else str(value).strip()
 
 
 def build_transcriber(kind: str) -> Transcriber:

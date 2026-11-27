@@ -7,6 +7,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -278,6 +279,30 @@ class CoreEventTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(fake.sent), 2)
         self.assertEqual(fake.sent[0], fake.sent[1])
+    def test_retry_after_lost_response_resubmits_the_same_revision(self):
+        class LostFirstResponse(FakeTransport):
+            def submit(self, event, key):
+                result = super().submit(event, key)
+                if len(self.sent) == 1:
+                    raise TimeoutError("request accepted, response lost")
+                return result
+
+        fake = LostFirstResponse()
+        with tempfile.TemporaryDirectory() as state:
+            def send():
+                return core_event.submit_meeting_event(
+                    MEETING, PROTOCOL, state, base_url="https://core.example",
+                    token="fixture", transport=fake)
+
+            with patch.object(core_event, "_now", return_value="2026-12-07T10:00:00Z"):
+                with self.assertRaises(TimeoutError):
+                    send()
+            with patch.object(core_event, "_now", return_value="2026-12-07T10:01:00Z"):
+                self.assertEqual(send()["event_id"], "evt-1")
+        first, retry = fake.sent
+        self.assertEqual(first[1], "meeting/m1/3")
+        self.assertEqual(retry[1], first[1])
+        self.assertEqual(retry[0], first[0], "One idempotency key must identify one event body")
 
 
 if __name__ == "__main__":

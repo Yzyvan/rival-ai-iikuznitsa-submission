@@ -26,6 +26,7 @@
 
 ```bash
 python3 -m unittest integrations/sources/test_client.py
+python3 -B -m unittest discover -s integrations/telemost -v
 python3 integrations/telemost/selftest.py
 python3 integrations/telemost/mock_join_test.py
 ```

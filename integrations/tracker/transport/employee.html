@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мои поручения · Vilar</title>
+<style>
+body{font:1rem/1.5 system-ui,sans-serif;background:#f6f3ef;color:#291d1d;max-width:42rem;margin:2rem auto;padding:0 1rem}
+article{padding:1.25rem;background:white;border-radius:1rem;margin:1rem 0}input,button{font:inherit;padding:.55rem;margin:.3rem 0} label{display:block}
+</style>
+<a href="/?tab=tasks&skip">← К задачам</a><h1>Мои поручения</h1><main></main><p role="status"></p>
+<script type="module">
+const main=document.querySelector("main"), message=document.querySelector('[role="status"]');
+async function api(path,options) {
+  const r=await fetch("./api/"+path,{cache:"no-store",...options});
+  if(!r.ok) throw new Error(r.status===409?"Версия изменилась. Откройте поручение заново.":"Запрос не прошёл ("+r.status+").");
+  return r.json();
+}
+function element(tag,text) {const e=document.createElement(tag); e.textContent=text;return e;}
+// A 202 acknowledges the submitted version even if a subsequent read is stale.
+const submittedVersions = new Map();
+function showReceipt(article, status, form) {
+  status.textContent = "Результат передан";
+  const retry = element("button", "Обновить карточку");
+  if (form) form.replaceWith(retry);
+  else article.append(retry);
+  retry.onclick = () => refreshAccepted(retry);
+  return retry;
+}
+async function refreshAccepted(retry) {
+  retry.disabled = true;
+  message.textContent = "Результат передан.";
+  try {
+    await load();
+  } catch {
+    message.textContent = "Результат передан. Не удалось обновить карточку.";
+    retry.disabled = false;
+  }
+}
+const stepId = new URLSearchParams(location.search).get("step");
+async function load(){
+  const {rows}=await api(stepId === null ? "mine" : "mine?" + new URLSearchParams({step:stepId}));
+  main.replaceChildren();
+  if (!rows.length) main.append(element("p",stepId === null ? "Выданных поручений пока нет." : "Поручение недоступно."));
+  for(const r of rows){
+    const a=element("article",""); a.append(element("h2",r.title));
+    const labels={open:"В работе",rework:"На доработке",in_review:"Сдано на проверку",accepted:"Принято"};
+    const status = element("p", labels[r.status] || r.status);
+    a.append(status);
+    const editable = ["open", "rework"].includes(r.status);
+    if (editable && r.version <= (submittedVersions.get(r.dispatch_id) ?? 0)) {
+      showReceipt(a, status);
+    } else if (editable) {
+      const form=element("form",""), label=element("label","ID допущенного результата "),input=document.createElement("input");
+      input.required=true; label.append(input); const button=element("button","Сдать результат");
+      form.append(label,button);a.append(form);let pending;
+      form.onsubmit=async e=>{
+        e.preventDefault();button.disabled=true;const ref=input.value.trim();
+        if(!pending||pending.event.data.result_ref!==ref){
+          pending={dispatch_id:r.dispatch_id,event:{source:{provider:"tracker",channel:"tasks",account:r.account,
+            object:r.tracker_object,actor_external:r.actor_external,change:"update",revision:crypto.randomUUID(),occurred_at:new Date().toISOString()},
+            data:{external_status:"submitted",result_ref:ref,work_id:r.work_id,step_id:r.step_id,
+              material_version:r.material_version,expected_version:r.version}}};
+        }
+        try {
+          await api("result", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(pending)});
+        } catch (err) {
+          message.textContent = err.message;
+          button.disabled = false;
+          return;
+        }
+        submittedVersions.set(r.dispatch_id, r.version);
+        await refreshAccepted(showReceipt(a, status, form));
+      };
+    }main.append(a);
+  }
+}
+load().catch(e=>message.textContent=e.message);
+</script></html>
