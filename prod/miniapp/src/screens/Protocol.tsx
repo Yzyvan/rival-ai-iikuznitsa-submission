@@ -1,4 +1,5 @@
 import { ActionBar, Button, IconButton, ListRow, ScreenHeader, Section, Tags } from "../ui";
+import { BoardDocument } from "./BoardDocument";
 import { useNav } from "../nav";
 
 /** Протокол встречи: черновик, который пользователь правит и утверждает. */
@@ -37,4 +38,14 @@ export function Protocol() {
       </ActionBar>
     </div>
   );
+}
+
+export function MeetingProtocol({ title, id, schedule, onBack }: {title: string; id: string; schedule: string; onBack(): void}) {
+  return <div className="screen"><div className="scroll">
+    <ScreenHeader title="Протокол встречи" left={<IconButton icon="arrow-left" label="Назад" onClick={onBack} />} />
+    <div className="body">
+      <div className="head"><h1 className="t-display">{title}</h1><Tags items={schedule.split(" · ")} /></div>
+      <BoardDocument kind="protocol" id={id} />
+    </div>
+  </div></div>;
 }

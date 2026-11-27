@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { fetchBoardData, isBrowserTest } from "../api/mailBoard";
+import { fetchBoardData, canEdit } from "../api/mailBoard";
 import { ListRow, Section } from "../ui";
+import { BoardDocument } from "./BoardDocument";
+import { MeetingProtocol } from "./Protocol";
 import { SheetView } from "./SheetView";
 
 type Choice = "delegate" | "personal";
@@ -80,6 +82,7 @@ export function CalendarDecisions({ pending, select }: Calendar) {
 }
 
 export function CalendarBoard({ meetings, error, selected, select, decide }: Calendar) {
+  const [protocolId, setProtocolId] = useState<string | null>(null);
   if (error || !meetings?.length) return <Section title="Календарь Outlook">
     <p role="status">{error || (meetings ? "Встреч пока нет." : "Загрузка…")}</p></Section>;
   const now = Date.now();
@@ -96,14 +99,18 @@ export function CalendarBoard({ meetings, error, selected, select, decide }: Cal
       ))}</Section>;
     })}
     {selected && createPortal(
-      <SheetView key={selected.id} sheet={{
+      protocolId === selected.id
+        ? <div className="nested" role="dialog" aria-label="Протокол встречи"><MeetingProtocol title={selected.title} id={selected.id} schedule={schedule(selected)} onBack={() => setProtocolId(null)} /></div>
+        : <SheetView key={selected.id} sheet={{
         title: selected.title,
         tags: [...schedule(selected).split(" · "), "Outlook"],
         status: needsChoice(selected) ? [when, "Внимание", "Яркая"] : undefined,
         msg: needsChoice(selected) ? "В приглашении есть ссылка на Телемост. Я могу пойти на встречу вместо вас. Кто пойдёт?" : undefined,
-        actions: needsChoice(selected) && !isBrowserTest ? [["Поручить Vilar", "primary", "delegate"], ["Иду сам", "secondary", "personal"]]
+        actions: needsChoice(selected) && canEdit ? [["Поручить Vilar", "primary", "delegate"], ["Иду сам", "secondary", "personal"]]
           : [["Закрыть", "ghost", "close"]],
-      }} onDecision={decide} onAction={() => select(null)} />,
+      }} onDecision={decide} onAction={() => select(null)}><BoardDocument kind="protocol" id={selected.id} />
+        <button className="btn btn--secondary" onClick={() => setProtocolId(selected.id)}>Открыть протокол</button>
+      </SheetView>,
       document.querySelector(".app")!,
     )}
   </>;

@@ -34,11 +34,26 @@ function telegramLaunch() {
   return new URLSearchParams(location.hash.slice(1)).get("tgWebAppData") || telegramWebApp()?.initData;
 }
 
+// A launch selects the UI. The API authenticates every request independently.
+export const hasAccountLaunch = Boolean(browserTestCode || telegramLaunch());
 export const isBrowserTest = Boolean(browserTestCode && !telegramLaunch());
+
+export let canEdit = Boolean(telegramLaunch());
+
+export async function loadBrowserAccess() {
+  if (!isBrowserTest) return;
+  try {
+    const res = await fetchBoardData("./api/owner/access", AbortSignal.timeout(5000));
+    canEdit = res.ok && (await res.json()).edit === true;
+  } catch {
+    canEdit = false;
+  }
+  try { sessionStorage.setItem("vilar:link-editable", String(canEdit)); } catch { /* storage unavailable */ }
+}
 
 export async function fetchBoardData(path: string, signal?: AbortSignal, body?: object) {
   const launch = telegramLaunch();
-  const authorization = launch ? "tma " + launch : browserTestCode && "vilar-test " + browserTestCode;
+  const authorization = launch ? "tma " + launch : browserTestCode && ((canEdit ? "vilar-edit " : "vilar-test ") + browserTestCode);
   if (!authorization) throw new TelegramLaunchError("Откройте Vilar по тестовой ссылке или через меню бота @vilar_ai_bot.");
 
   const response = await fetch(path, {

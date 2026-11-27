@@ -6,8 +6,7 @@ import { TabBar, UndoToast, type TabId } from "./ui";
 import { Preloader } from "./screens/Preloader";
 import { Onboarding, needOnboarding } from "./screens/Onboarding";
 import { Board } from "./screens/Board";
-import { isBrowserTest } from "./api/mailBoard";
-import { LiveNotifications, LiveProfile, LiveStats } from "./screens/LiveOverview";
+import { hasAccountLaunch } from "./api/mailBoard";
 import { Tasks } from "./screens/Tasks";
 import { Tasks as TrackerTasks, TaskBindingsProvider } from "../../../integrations/tracker/src";
 import { trackerBindings } from "../../../integrations/tracker/transport/bindings";
@@ -28,9 +27,9 @@ import { PickDateSheet, shortDate } from "./screens/PickDateSheet";
 import { sheets } from "./data/sheets";
 import { readDeepLink } from "./deeplink";
 
-const nested: Record<string, () => JSX.Element> = isBrowserTest ? {
-  notifications: () => <LiveNotifications />,
-  profile: () => <LiveProfile />,
+const nested: Record<string, () => JSX.Element> = hasAccountLaunch ? {
+  notifications: () => <Notifications />,
+  profile: () => <Profile />,
 } : {
   protocol: () => <Protocol />, task: () => <TaskEdit />, delivery: () => <Delivery />, "delivery-done": () => <Delivery done />,
   notifications: () => <Notifications />, profile: () => <Profile />, "no-access": () => <NoAccess />,
@@ -41,15 +40,15 @@ const REVEAL = new Set(["notifications", "profile"]);
 
 export function App() {
   // ?skip — без прелоудера; ?open=sheet:dec1 или startapp=sheet-dec1 — сразу на нужный экран и шторку (см. deeplink.ts)
-  const [deep] = useState(() => readDeepLink(nested));
-  const [loading, setLoading] = useState(!deep.skip && !isBrowserTest);
+  const [deep] = useState(() => readDeepLink(nested, hasAccountLaunch));
+  const [loading, setLoading] = useState(!deep.skip);
   // первый вход: после прелоудера — регистрация на той же подложке (?onboarding — показать заново)
-  const [onboard, setOnboard] = useState(() => !isBrowserTest && needOnboarding(deep.skip, !!deep.sheet || deep.screens.length > 0 || !!deep.tab));
+  const [onboard, setOnboard] = useState(() => needOnboarding(deep.skip, !!deep.sheet || deep.screens.length > 0 || !!deep.tab));
   const [tab, setTab] = useState<TabId>(deep.tab ?? "board");
   const [stage, setStage] = useState<StageId>(deep.stage ?? defaultStage);
   const selectStage = useCallback((next: StageId) => {
     setStage(next);
-    if (isBrowserTest) {
+    if (hasAccountLaunch) {
       const url = new URL(window.location.href);
       url.searchParams.set("open", "board:" + next);
       window.history.replaceState(window.history.state, "", url);
@@ -75,7 +74,7 @@ export function App() {
     window.addEventListener("pointerdown", remember, true);
     return () => window.removeEventListener("pointerdown", remember, true);
   }, []);
-  const [sheet, setSheet] = useState<string | null>(isBrowserTest ? null : deep.sheet ?? null);
+  const [sheet, setSheet] = useState<string | null>(hasAccountLaunch ? null : deep.sheet ?? null);
   const [toast, setToast] = useState<{ id: string; key: number; text?: string } | null>(null);
   // «Перенести срок»: шторка выбора даты и времени, потом тост с выбранной датой
   const [pick, setPick] = useState<{ toast: string; about?: string } | null>(null);
@@ -98,7 +97,7 @@ export function App() {
   const nav = useCallback((target: string) => {
     // «back», «home» — без двоеточия; у шторок id сам может содержать «:» (авто-шторки задач)
     const cut = target.indexOf(":"), kind = cut < 0 ? target : target.slice(0, cut), id = cut < 0 ? "" : target.slice(cut + 1);
-    if (kind === "sheet" && !isBrowserTest) setSheet(id);
+    if (kind === "sheet" && (!hasAccountLaunch || id === "help")) setSheet(id);
     else if (kind === "pick") { setPick({ toast: id, about: sheetRef.current ? sheets[sheetRef.current]?.title : undefined }); setSheet(null); }
     else if (kind === "toast") { setSheet(null); setToast({ id, key: Date.now() }); }
     else if (kind === "screen") { setSheet(null); setStack((s) => [...s, { id, origin: REVEAL.has(id) ? { ...tap.current } : undefined, from: REVEAL.has(id) ? tapped.current ?? undefined : undefined }]); }
@@ -129,10 +128,10 @@ export function App() {
       <div className="app">
         {/* раздел меню рисуется всегда — вложенный экран ложится сверху (и может раскрыться кругом из кнопки) */}
         {tab === "board" && <Board stage={stage} onStage={selectStage} />}
-        {tab === "tasks" && (isBrowserTest || showTracker
+        {tab === "tasks" && (hasAccountLaunch || showTracker
           ? <TaskBindingsProvider bindings={standBindings}><TrackerTasks /></TaskBindingsProvider>
           : <Tasks />)}
-        {tab === "stats" && (isBrowserTest ? <LiveStats /> : <Stats />)}
+        {tab === "stats" && <Stats />}
         <TabBar active={tab} onChange={changeTab} />
         {top && nested[top.id] && (
           <div key={stack.length + top.id} className={`nested${top.origin ? " nested--reveal" : ""}${top.origin && closing ? " is-closing" : ""}`}
