@@ -1,3 +1,4 @@
+import { CalendarBoard, useCalendar } from "./CalendarBoard";
 import { useLayoutEffect, useRef, useState } from "react";
 import { boards, glow, load, playGlow, stages, today, userInitials, type StageId } from "../data/content";
 import { Avatar, IconButton, ListRow, LoadBadge, Mark, Section, Wordmark } from "../ui";
@@ -9,6 +10,8 @@ import { MailBoard, useImportedMail } from "./MailBoard";
 export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId) => void }) {
   const nav = useNav();
   const data = boards[stage];
+  const isCalendar = stage === "meetings";
+  const calendar = useCalendar(isCalendar);
   const isMail = stage === "mail";
   const mail = useImportedMail();
   const wrap = useRef<HTMLDivElement>(null);
@@ -60,7 +63,7 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
   return (
     <div className="screen screen--surface">
       <div className="scroll">
-        <div className="board-date"><span className="date-chip t-caption-medium">{today}</span></div>
+        <div className="board-date"><span className="date-chip t-caption-medium">{isCalendar ? new Date().toLocaleDateString("ru-RU", {day:"numeric", month:"long", timeZone:"Europe/Moscow"}) : today}</span></div>
         <header className="header header--board">
           <IconButton icon="bell" label="Уведомления" onClick={() => nav("screen:notifications")} />
           {/* логотип из прелоудера: знак + надпись, высота 18, прозрачность 30% */}
@@ -77,7 +80,7 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
                   {s.label}
                   {s.id !== stage && (s.id === "mail"
                     ? mail.messages && <LoadBadge count={mail.messages.length} />
-                    : <LoadBadge count={s.count} />)}
+                    : s.id === "meetings" ? calendar.meetings && <LoadBadge count={calendar.meetings.length} /> : <LoadBadge count={s.count} />)}
                 </button>
               ))}
             </div>
@@ -95,18 +98,18 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
           <div className="hero">
             <div key={stage} className="hero__body stage-content" style={{ gap: 28 }}>
               <div className="hero__count">
-                <span className="t-hero-number">{isMail ? mail.messages?.length ?? "—" : data.hero.count}</span>
-                <span className="t-body-l">{isMail ? "письма из Outlook" : data.hero.label}</span>
+                <span className="t-hero-number">{isMail ? mail.messages?.length ?? "—" : isCalendar ? calendar.meetings?.length ?? "—" : data.hero.count}</span>
+                <span className="t-body-l">{isMail ? "письма из Outlook" : isCalendar ? "Встречи из Outlook" : data.hero.label}</span>
               </div>
               <div className="hero__rows">
-                {!isMail && data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
+                {!isMail && !isCalendar && data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
               </div>
             </div>
           </div>
         </div>
 
         <div key={stage} className="board-sheet stage-content">
-          {isMail ? <MailBoard mail={mail} /> : data.sections.map((s) => (
+          {isMail ? <MailBoard mail={mail} /> : isCalendar ? <CalendarBoard {...calendar} /> : data.sections.map((s) => (
             <Section key={s.title} title={s.title} vilar={s.vilar}>
               {s.rows.map((r) => <ListRow key={r.title} urgent={r.urgent} title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
             </Section>
