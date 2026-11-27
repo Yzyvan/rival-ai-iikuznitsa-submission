@@ -19,3 +19,9 @@ export VILAR_OUTLOOK_ACCOUNT='your-test-mailbox@outlook.com'
 Доступны чтение, подготовка нового черновика и ответа в цепочке, отправка выбранного черновика. За согласование текста и адресата с руководителем перед отправкой отвечает вызывающее приложение. Набор разрешений можно посмотреть через `./outlook permissions`.
 
 Зависимость: [Softeria MS-365 MCP Server](https://github.com/Softeria/ms-365-mcp-server).
+
+Event intake on the existing Outlook callback is opt-in. The callback process must be able
+to import the adapter from this directory and uses VILAR_MAIL_PUSH_DIR and
+VILAR_MAIL_CLIENT_STATE. The mail worker must use the same state directory. Before
+enabling mail, verify that calendar-only notifications still work with mail disabled.
+Run the public contract test with python3 test_mail_push.py from this directory.
