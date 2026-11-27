@@ -90,7 +90,12 @@ WAITING_MARKERS = [
     "зал ожидания",
     "организатор скоро впустит",
     "ожидайте, пока организатор",
+    "организатор видит ваш запрос",
     "waiting for the host",
+]
+
+PREJOIN_MARKERS = [
+    "ваше имя на встрече",
 ]
 
 END_MARKERS = [
@@ -156,9 +161,14 @@ class TelemostBot:
         self.pcm_total = 0
         self.chunk_idx: dict[str, int] = {}
         self.speaker_labels: dict[str, str] = {}
+        self.track_names: dict[str, str] = {}
         self.transcriber: Transcriber = build_transcriber(args.stt)
         self.running = True
         self.connected = False
+        self.intro_started = False
+        self.had_remote = False
+        self.had_others = False
+        self.stop_reason = ""
         self.capture_path = ""
         self.frames_seen: set[str] = set()
         self.start_time = time.monotonic()
@@ -241,6 +251,9 @@ class TelemostBot:
             await self.context.route(re.compile(r"https://telemost\.yandex\.ru/j/MOCK.*"), serve_main)
             await self.context.route(re.compile(r"https://telemost\.yandex\.ru/private-join/MOCK.*"), serve_frame)
 
+        if self.args.black_screen:
+            self.say("Чёрный экран: камера без аватара, микрофон — тишина")
+
         if self.args.mic_file:
             voice = Path(self.args.mic_file).expanduser().resolve()
             if not voice.exists():
@@ -267,22 +280,25 @@ class TelemostBot:
                 raise SystemExit(f"Нет файла MP4: {mp4}")
             body = mp4.read_bytes()
             self.say(f"Аватар {i + 1}/{len(files)}: {mp4.name}, {len(body) / 1024 / 1024:.1f} МБ")
-            url = f"/__tm_avatar_{i}.mp4"
+            url = f"/__tm_avatar_{i}{mp4.suffix.lower()}"
             self.avatar_urls.append(url)
+            content_type = "video/webm" if mp4.suffix.lower() == ".webm" else "video/mp4"
 
-            def make_avatar_handler(body_bytes):
+            def make_avatar_handler(body_bytes, media_type):
                 async def serve_avatar(route):
                     await route.fulfill(
                         status=200,
                         body=body_bytes,
-                        headers={"Content-Type": "video/mp4", "Cache-Control": "no-store"},
+                        headers={"Content-Type": media_type, "Cache-Control": "no-store"},
                     )
                 return serve_avatar
 
-            await self.context.route(f"**{url}", make_avatar_handler(body))
+            await self.context.route(f"**{url}", make_avatar_handler(body, content_type))
 
         inject = (ROOT / "telemost_inject.js").read_text(encoding="utf-8")
-        if self.args.mic_tone:
+        if self.args.black_screen:
+            mic_mode = "silence"
+        elif self.args.mic_tone:
             mic_mode = "tone"
         elif self.args.mic_file:
             mic_mode = "file"
@@ -291,12 +307,17 @@ class TelemostBot:
         config = {
             "videoUrl": self.avatar_urls[0] if self.avatar_urls else "",
             "videoUrls": self.avatar_urls,
+            "blackScreen": bool(self.args.black_screen),
             "micMode": mic_mode,
             "micFileUrl": "/__tm_voice.wav" if self.args.mic_file else "",
+            "micLoop": not bool(self.args.mic_once),
+            "introCount": max(0, int(self.args.avatar_intro_count)),
+            "startOnJoin": bool(self.args.start_on_join),
             "toneHz": self.args.tone_hz,
             "toneGain": self.args.tone_gain,
             "fps": 24,
             "cameraLabel": "HD Camera",
+            "selfName": self.args.name,
             "debug": self.debug,
         }
         prefix = f"window.__TELEMOST_BOT_CONFIG__ = {json.dumps(config)};\n"
@@ -454,6 +475,23 @@ class TelemostBot:
                 continue
         return ""
 
+    async def _track_names(self) -> dict[str, str]:
+        if not self.page:
+            return self.track_names
+        for frame in self.page.frames:
+            try:
+                data = await asyncio.wait_for(
+                    frame.evaluate("window.__tmBotTrackMap ? window.__tmBotTrackMap() : {}"),
+                    2,
+                )
+                if isinstance(data, dict):
+                    self.track_names.update(
+                        {str(k): str(v) for k, v in data.items() if v}
+                    )
+            except Exception:
+                continue
+        return self.track_names
+
     async def _dump_participants(self) -> None:
         if not self.page:
             return
@@ -572,6 +610,26 @@ class TelemostBot:
         await asyncio.sleep(2)
         await self._screenshot("04-after-join")
 
+    async def _start_intro(self) -> None:
+        assert self.page
+        started = False
+        for frame in self.page.frames:
+            try:
+                ok = await frame.evaluate(
+                    "() => { if (window.__tmBotStartIntro) { window.__tmBotStartIntro(); return true; } return false; }"
+                )
+            except Exception as error:
+                self.say(f"Интро во фрейме не запустилось: {error}")
+                continue
+            started = started or bool(ok)
+        self.intro_started = True
+        if started:
+            self.event("intro_started")
+            self.say("Интро и голос запущены")
+        else:
+            self.event("intro_not_found")
+            self.say("Не нашёл __tmBotStartIntro — интро не запущено")
+
     async def _wait_connected(self) -> None:
         assert self.page
         deadline = time.monotonic() + self.wait_timeout
@@ -594,6 +652,8 @@ class TelemostBot:
 
             if st["tracks"] > 0 or in_call:
                 self.connected = True
+                if self.args.start_on_join and not self.intro_started:
+                    await self._start_intro()
                 self.event("connected", status=st)
                 self.say(
                     f"В комнате: peer-соединений {st['connected']}, "
@@ -643,7 +703,16 @@ class TelemostBot:
             return
         idx = self.chunk_idx.get(track_key, 0) + 1
         self.chunk_idx[track_key] = idx
-        speaker = await self._active_speaker() or "Общий поток"
+        speaker = ""
+        if track_key.startswith("track:"):
+            names = await self._track_names()
+            speaker = names.get(track_key.split(":", 1)[1], "")
+        if speaker.strip().lower() == str(self.args.name).strip().lower():
+            speaker = ""
+        if not speaker:
+            speaker = await self._active_speaker() or "Общий поток"
+        if track_key.startswith("track:") and speaker == "Общий поток":
+            speaker = "Участник " + track_key.rsplit(":", 1)[-1][-4:]
         seconds = len(pcm) / 32000
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", track_key)
         wav_path = self.audio_dir / f"chunk-{safe}-{idx:04d}.wav"
@@ -684,20 +753,61 @@ class TelemostBot:
     async def _run_loop(self) -> None:
         assert self.page
         last_status = 0.0
+        last_parts = 0.0
+        zero_since: float | None = None
+        alone_since: float | None = None
         while self.running:
-            if time.monotonic() - self.start_time > self.duration:
+            now = time.monotonic()
+            if now - self.start_time > self.duration:
                 self.say("Дошли до лимита длительности")
+                self.stop_reason = "duration_limit"
                 break
             if self.page.is_closed():
                 self.say("Страница закрыта")
+                self.stop_reason = "page_closed"
                 break
             if await self._has_marker(END_MARKERS):
-                self.say("Встреча завершена")
+                self.say("Конференция завершена")
+                self.stop_reason = "meeting_ended"
                 break
 
-            now = time.monotonic()
+            st = await self._status()
+            if st["tracks"] > 0:
+                self.had_remote = True
+                zero_since = None
+            elif self.had_remote:
+                if zero_since is None:
+                    zero_since = now
+                elif now - zero_since >= 15:
+                    self.say("Связь с конференцией пропала — останавливаюсь")
+                    self.stop_reason = "connection_lost"
+                    break
+
+            if st["tracks"] == 0 and (self.had_remote or now - self.start_time > 20):
+                if await self._has_marker(PREJOIN_MARKERS):
+                    self.say("Телемост вернул на экран гостя — конференция закончилась")
+                    self.stop_reason = "returned_to_prejoin"
+                    break
+                if await self._has_marker(WAITING_MARKERS):
+                    self.say("Бот оказался в зале ожидания — останавливаюсь")
+                    self.stop_reason = "waiting_room"
+                    break
+
+            if now - last_parts >= 5:
+                parts = await self._participants()
+                last_parts = now
+                if parts > 1:
+                    self.had_others = True
+                    alone_since = None
+                elif self.had_others and parts == 1:
+                    if alone_since is None:
+                        alone_since = now
+                    elif now - alone_since >= 15:
+                        self.say("В комнате не осталось участников — останавливаюсь")
+                        self.stop_reason = "alone_in_room"
+                        break
+
             if now - last_status >= 10:
-                st = await self._status()
                 parts = await self._participants()
                 self.say(
                     f"статус: участников={parts if parts >= 0 else '?'} "
@@ -715,6 +825,8 @@ class TelemostBot:
                 self.event("status", participants=parts, **st)
                 last_status = now
             await asyncio.sleep(2)
+        if self.stop_reason:
+            self.event("conference_ended", reason=self.stop_reason)
 
     async def run(self) -> int:
         try:
@@ -748,13 +860,14 @@ class TelemostBot:
                 "video_width": st["max_video_width"],
                 "video_height": st["max_video_height"],
                 "stt_provider": self.transcriber.name,
+                "stop_reason": self.stop_reason,
                 "estimated_stt_cost_rub": round(
                     math.ceil(st["stt_audio_seconds"] / 15) * 0.1626, 2
                 ) if self.transcriber.name == "yandex" else 0.0,
             }
             self.summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
             self.event("summary", **summary)
-            self.event("finished", pcm_bytes=self.pcm_total)
+            self.event("finished", pcm_bytes=self.pcm_total, stop_reason=self.stop_reason)
             return 0
         except InvalidRoom as e:
             self.event("invalid_room", error=str(e))
@@ -824,6 +937,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--avatar-y4m", help="Y4M-файл для камеры (Chromium fake capture)")
     p.add_argument("--avatar-mp4", help="MP4-файл для камеры через canvas (динамичнее)")
     p.add_argument("--avatar-playlist", nargs="+", help="несколько MP4 для камеры, по очереди")
+    p.add_argument("--black-screen", action="store_true", help="чёрный экран вместо аватара, микрофон молчит")
     p.add_argument("--headed", action="store_true", help="показать окно браузера")
     p.add_argument("--chrome", help="путь к Chrome/Chromium")
     p.add_argument("--out", default=str(ROOT / "out"), help="каталог сессии")
@@ -836,6 +950,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--mock", action="store_true", help="фейковая комната для проверки входа")
     p.add_argument("--mic-tone", action="store_true", help="тестовый тон в микрофон вместо тишины")
     p.add_argument("--mic-file", help="WAV-файл в микрофон вместо тишины")
+    p.add_argument("--mic-once", action="store_true", help="не зацикливать WAV микрофона")
+    p.add_argument("--avatar-intro-count", type=int, default=0, help="сколько первых клипов проиграть один раз, затем цикл")
+    p.add_argument("--start-on-join", action="store_true", help="запускать интро и голос после входа в комнату")
     p.add_argument("--tone-hz", type=int, default=440, help="частота тестового тона")
     p.add_argument("--tone-gain", type=float, default=0.05, help="громкость тестового тона")
     p.add_argument("--debug", action="store_true", help="скриншоты и логи браузера")

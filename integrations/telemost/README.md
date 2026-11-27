@@ -10,6 +10,8 @@
 - `stt.py` — Yandex SpeechKit / Groq Whisper.
 - `create_meeting.py`, `find_link.py` — создание комнаты и поиск ссылки.
 - `tasks.py` — экспорт поручений из уже утверждённого `protocol.approved.json`.
+- `core_event.py` — сборка события `meeting` для `POST /v1/events` и чтение квитанции.
+- `test_core_event.py` — синтетическая проверка формы события и идемпотентного ключа.
 - `selftest.py`, `mock_join_test.py` — синтетические проверки без реальной комнаты.
 
 ## Чего здесь нет

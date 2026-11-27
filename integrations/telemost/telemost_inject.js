@@ -17,8 +17,15 @@
     pcmFrames: 0,
     pcmRunning: false,
     avatarStream: null,
+    blackStream: null,
     silenceTrack: null,
     micFileTrack: null,
+    micFileGain: null,
+    micFileStart: null,
+    micFileStarted: false,
+    introRequested: false,
+    introStarted: false,
+    avatarStart: null,
     errors: [],
   };
   window.__tmBotState = state;
@@ -48,6 +55,40 @@
     if (window.webkitRTCPeerConnection) window.webkitRTCPeerConnection = WrappedPC;
   }
 
+  function makePcmSender(key) {
+    const acc = [];
+    let accLen = 0;
+    return (ev) => {
+      if (!state.pcmRunning) return;
+      const ch = ev.inputBuffer.getChannelData(0);
+      const step = state.resample;
+      for (let i = 0; i < ch.length; i += step) {
+        let s = 0, n = 0;
+        for (let j = 0; j < step && i + j < ch.length; j++) { s += ch[i + j]; n++; }
+        let v = s / n;
+        if (v > 1) v = 1; else if (v < -1) v = -1;
+        acc.push(v < 0 ? v * 0x8000 : v * 0x7fff);
+        accLen++;
+      }
+      if (accLen >= 8000) {
+        const ints = new Int16Array(acc);
+        acc.length = 0;
+        accLen = 0;
+        const bytes = new Uint8Array(ints.buffer);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        state.pcmBytes += bytes.length;
+        state.pcmFrames += ints.length;
+        const b64 = btoa(bin);
+        if (typeof window.__tmBotPcm === 'function') {
+          try { window.__tmBotPcm(b64, location.pathname, key); } catch (e) { state.errors.push(String(e)); }
+        }
+      }
+    };
+  }
+
   function ensureAudio() {
     if (!state.audioCtx) {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -70,11 +111,19 @@
     try {
       const ctx = ensureAudio();
       const src = ctx.createMediaStreamSource(new MediaStream([track]));
-      src.connect(state.processor);
-      state.tracks.set(track.id, { track, src, source });
+      const proc = ctx.createScriptProcessor(4096, 1, 1);
+      const sink = ctx.createGain();
+      sink.gain.value = 0;
+      src.connect(proc);
+      proc.connect(sink);
+      sink.connect(ctx.destination);
+      proc.onaudioprocess = makePcmSender('track:' + track.id);
+      state.tracks.set(track.id, { track, src, proc, sink, source });
       track.addEventListener('ended', () => {
         state.tracks.delete(track.id);
         try { src.disconnect(); } catch (e) { /* ignore */ }
+        try { proc.disconnect(); } catch (e) { /* ignore */ }
+        try { sink.disconnect(); } catch (e) { /* ignore */ }
       });
       log('audio track', track.id, source, 'total', state.tracks.size);
     } catch (e) {
@@ -82,37 +131,12 @@
     }
   }
 
-  // Смешанный поток -> PCM16 16 кГц -> base64 -> Python.
-  const acc = [];
-  let accLen = 0;
+  // Общий микс остаётся резервом, пока отдельные дорожки не появились.
+  let mixSender = null;
   function onAudio(ev) {
-    if (!state.pcmRunning) return;
-    const ch = ev.inputBuffer.getChannelData(0);
-    const step = state.resample;
-    for (let i = 0; i < ch.length; i += step) {
-      let s = 0, n = 0;
-      for (let j = 0; j < step && i + j < ch.length; j++) { s += ch[i + j]; n++; }
-      let v = s / n;
-      if (v > 1) v = 1; else if (v < -1) v = -1;
-      acc.push(v < 0 ? v * 0x8000 : v * 0x7fff);
-      accLen++;
-    }
-    if (accLen >= 8000) {
-      const ints = new Int16Array(acc);
-      acc.length = 0;
-      accLen = 0;
-      const bytes = new Uint8Array(ints.buffer);
-      let bin = '';
-      for (let i = 0; i < bytes.length; i += 0x8000) {
-        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-      }
-      state.pcmBytes += bytes.length;
-      state.pcmFrames += ints.length;
-      const b64 = btoa(bin);
-      if (typeof window.__tmBotPcm === 'function') {
-        try { window.__tmBotPcm(b64, location.pathname); } catch (e) { state.errors.push(String(e)); }
-      }
-    }
+    if (state.tracks.size > 0) return;
+    if (!mixSender) mixSender = makePcmSender('mix');
+    mixSender(ev);
   }
 
   window.__tmBotStartPcm = () => { ensureAudio(); state.pcmRunning = true; return true; };
@@ -181,12 +205,22 @@
         const decoded = await ctx.decodeAudioData(buf);
         const src = ctx.createBufferSource();
         src.buffer = decoded;
-        src.loop = true;
+        src.loop = !!CFG.micLoop;
         const dest = ctx.createMediaStreamDestination();
-        src.connect(dest);
-        src.start();
+        const gain = ctx.createGain();
+        gain.gain.value = CFG.startOnJoin ? 0 : 1;
+        src.connect(gain);
+        gain.connect(dest);
         state.micFileSource = src;
+        state.micFileGain = gain;
         state.micFileTrack = dest.stream.getAudioTracks()[0];
+        state.micFileStart = () => {
+          if (state.micFileStarted) return;
+          state.micFileStarted = true;
+          try { gain.gain.setValueAtTime(1, ctx.currentTime); } catch (e) { gain.gain.value = 1; }
+          try { src.start(0); } catch (e) { log('mic file start failed', String(e)); }
+        };
+        if (!CFG.startOnJoin || state.introRequested) state.micFileStart();
         return state.micFileTrack;
       })().catch((e) => { state.micFilePromise = null; throw e; });
       return state.micFilePromise;
@@ -205,6 +239,28 @@
       return state.silenceTrack;
     }
 
+    function blackStream() {
+      if (state.blackStream) return state.blackStream;
+      const fps = CFG.fps || 24;
+      const w = CFG.width || 1280;
+      const h = CFG.height || 720;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const g = c.getContext('2d', { alpha: false });
+      const paint = () => { g.fillStyle = '#000'; g.fillRect(0, 0, w, h); };
+      paint();
+      setInterval(paint, Math.max(10, Math.round(1000 / fps)));
+      const stream = c.captureStream(fps);
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        try { Object.defineProperty(track, 'label', { configurable: true, get: () => CFG.cameraLabel || 'HD Camera' }); } catch (e) { /* ignore */ }
+      }
+      state.blackStream = stream;
+      log('black screen stream ready', w, h, fps);
+      return stream;
+    }
+
     async function avatarStream() {
       if (avatarPromise) return avatarPromise;
       avatarPromise = (async () => {
@@ -212,6 +268,13 @@
           ? CFG.videoUrls.slice()
           : (CFG.videoUrl ? [CFG.videoUrl] : []);
         if (!urls.length) throw new Error('no avatar videos');
+        const blobs = [];
+        for (const url of urls) {
+          const resp = await fetch(url, { cache: 'no-store' });
+          if (!resp.ok) throw new Error('avatar fetch HTTP ' + resp.status + ': ' + url);
+          blobs.push(await resp.blob());
+        }
+        const objectUrls = blobs.map((blob) => URL.createObjectURL(blob));
         const fps = CFG.fps || 24;
         const w = CFG.width || 1280;
         const h = CFG.height || 720;
@@ -250,7 +313,7 @@
         const loadClip = async (i) => {
           ready = false;
           idx = i % urls.length;
-          v.src = urls[idx];
+          v.src = objectUrls[idx];
           v.load();
           await new Promise((resolve, reject) => {
             let done = false;
@@ -265,13 +328,26 @@
           log('avatar clip', idx + 1, '/', urls.length, v.videoWidth, v.videoHeight);
         };
 
-        v.addEventListener('ended', () => {
-          loadClip(idx + 1).catch((e) => {
+        const introCount = Math.max(0, Math.min(Number(CFG.introCount) || 0, urls.length));
+        const loopStart = introCount > 0 ? introCount : 0;
+        const nextIndex = (i) => (i + 1 < urls.length ? i + 1 : loopStart);
+        const scheduleNext = (i) => {
+          if (!state.introStarted) return;
+          loadClip(nextIndex(i)).catch((e) => {
             state.errors.push(String(e));
-            setTimeout(() => { loadClip(idx + 1).catch(() => {}); }, 1000);
+            setTimeout(() => { if (state.introStarted) loadClip(nextIndex(i)).catch(() => {}); }, 1000);
           });
-        });
-        loadClip(0).catch((e) => state.errors.push(String(e)));
+        };
+        v.addEventListener('ended', () => scheduleNext(idx));
+        state.avatarStart = () => {
+          if (state.introStarted) return;
+          state.introStarted = true;
+          loadClip(0).catch((e) => {
+            state.errors.push(String(e));
+            if (urls.length > 1) scheduleNext(0);
+          });
+        };
+        if (!CFG.startOnJoin || state.introRequested) state.avatarStart();
 
         const stream = c.captureStream(fps);
         const track = stream.getVideoTracks()[0];
@@ -294,7 +370,10 @@
       try { native = await origGUM(c); } catch (e) { log('native getUserMedia failed', String(e)); }
       const out = [];
       if (wantsVideo) {
-        if (CFG.videoUrl || (CFG.videoUrls && CFG.videoUrls.length)) {
+        if (CFG.blackScreen) {
+          try { out.push(...blackStream().getVideoTracks()); }
+          catch (e) { if (native) out.push(...native.getVideoTracks()); }
+        } else if (CFG.videoUrl || (CFG.videoUrls && CFG.videoUrls.length)) {
           try { out.push(...(await avatarStream()).getVideoTracks()); }
           catch (e) { if (native) out.push(...native.getVideoTracks()); }
         } else if (native) {
@@ -317,6 +396,14 @@
       return new MediaStream(out);
     };
   }
+
+  window.__tmBotStartIntro = () => {
+    state.introRequested = true;
+    if (state.micFileStart) state.micFileStart();
+    if (state.avatarStart) state.avatarStart();
+    log('intro requested');
+  };
+
   // Подпись говорящего из DOM: ищем плитку с признаком активного голоса.
   window.__tmBotActiveSpeaker = () => {
     const selectors = [
@@ -352,4 +439,52 @@
     }
     return out;
   };
+
+  window.__tmBotTrackMap = () => {
+    const selfName = String(CFG.selfName || '').trim().toLowerCase();
+    const names = [];
+    for (const el of document.querySelectorAll('[class*="participantName"]')) {
+      const name = (el.textContent || '').trim();
+      if (name && !(selfName && name.toLowerCase() === selfName) && !names.includes(name)) names.push(name);
+    }
+    const mediaTracks = [];
+    for (const media of document.querySelectorAll('audio, video')) {
+      const stream = media.srcObject;
+      if (!stream) continue;
+      for (const track of stream.getAudioTracks()) mediaTracks.push({ track, media });
+    }
+    const map = {};
+    for (const { track, media } of mediaTracks) {
+      let el = media;
+      for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
+        const named = el.querySelector && el.querySelector('[class*="participantName"]');
+        const name = (named && named.textContent || '').trim();
+        if (name && !(selfName && name.toLowerCase() === selfName)) {
+          map[track.id] = name;
+          break;
+        }
+      }
+    }
+    const unmapped = mediaTracks.filter(({ track }) => !map[track.id]);
+    unmapped.forEach(({ track }, i) => {
+      if (names.length > 1) {
+        map[track.id] = names[i % names.length];
+      } else if (names.length === 1) {
+        map[track.id] = names[0] + ' ' + (i + 1);
+      } else {
+        map[track.id] = 'Участник ' + (i + 1);
+      }
+    });
+    const counts = {};
+    for (const name of Object.values(map)) counts[name] = (counts[name] || 0) + 1;
+    const seen = {};
+    for (const [trackId, name] of Object.entries(map)) {
+      if (counts[name] > 1) {
+        seen[name] = (seen[name] || 0) + 1;
+        map[trackId] = name + ' ' + seen[name];
+      }
+    }
+    return map;
+  };
+
 })();
