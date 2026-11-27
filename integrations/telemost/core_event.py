@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,7 +69,9 @@ def _quote(protocol: dict, transcript_text: str = "") -> str:
     return str(protocol.get("summary") or "")[:600]
 
 
-def build_meeting_event(meeting: dict, protocol: dict, transcript_text: str = "") -> tuple[dict, str]:
+def build_meeting_event(
+    meeting: dict, protocol: dict, transcript_text: str = "", gaps: list[dict] | None = None
+) -> tuple[dict, str]:
     meeting_id = str(meeting.get("id") or "")
     revision = str(meeting.get("revision") or 1)
     start = _occurred_at(meeting)
@@ -98,6 +101,8 @@ def build_meeting_event(meeting: dict, protocol: dict, transcript_text: str = ""
             "protocol": protocol,
             "transcript": (transcript_text or "")[:MAX_TRANSCRIPT_CHARS],
             "transcript_format": "[HH:MM:SS] [speaker] text",
+            "gaps": gaps or [],
+            "transcript_complete": not gaps,
         },
     }
     return event, f"meeting/{meeting_id}/{revision}"
@@ -165,6 +170,22 @@ def _write_outbox(path: Path, record: dict) -> None:
         raise
 
 
+def _send_event(client, event: dict, key: str) -> tuple[int, str, dict | None]:
+    status, payload = client.submit(event, key)
+    if not 200 <= int(status) < 300:
+        raise RuntimeError(f"core HTTP {status}: {str(payload)[:300]}")
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"core HTTP {status}: unexpected payload")
+    event_id = str(payload.get("event_id") or payload.get("id") or "")
+    receipt = None
+    if event_id:
+        try:
+            _, receipt = client.read(event_id)
+        except Exception:
+            receipt = None
+    return int(status), event_id, receipt
+
+
 def submit_meeting_event(
     meeting: dict,
     protocol: dict,
@@ -174,8 +195,9 @@ def submit_meeting_event(
     token: str = "",
     transport=None,
     transcript_text: str = "",
+    gaps: list[dict] | None = None,
 ) -> dict:
-    event, key = build_meeting_event(meeting, protocol, transcript_text)
+    event, key = build_meeting_event(meeting, protocol, transcript_text, gaps=gaps)
     if not (base_url and token):
         path = Path(state_dir) / "core_events.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -204,18 +226,7 @@ def submit_meeting_event(
             event = record["event"]
 
     client = transport or SourceClient(base_url, token)
-    status, payload = client.submit(event, key)
-    if not 200 <= int(status) < 300:
-        raise RuntimeError(f"core HTTP {status}: {str(payload)[:300]}")
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"core HTTP {status}: unexpected payload")
-    event_id = str(payload.get("event_id") or payload.get("id") or "")
-    receipt = None
-    if event_id:
-        try:
-            _, receipt = client.read(event_id)
-        except Exception:
-            receipt = None
+    status, event_id, receipt = _send_event(client, event, key)
 
     with _locked(path):
         record = _read_outbox(path) or {
@@ -234,3 +245,69 @@ def submit_meeting_event(
         "event_id": event_id,
         "receipt": receipt,
     }
+
+
+def pending_core_events(state_dir: str | Path) -> int:
+    root = Path(state_dir) / "core_outbox"
+    if not root.is_dir():
+        return 0
+    count = 0
+    for path in root.glob("*.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not record.get("event_id"):
+            count += 1
+    return count
+
+
+def retry_core_outbox(
+    state_dir: str | Path,
+    base_url: str,
+    token: str,
+    *,
+    transport=None,
+    now: float | None = None,
+) -> dict:
+    """Re-send stored events after a failed or lost response."""
+    root = Path(state_dir) / "core_outbox"
+    if not root.is_dir():
+        return {"sent": 0, "failed": 0, "pending": 0}
+    client = transport or SourceClient(base_url, token)
+    sent = 0
+    failed = 0
+    for path in sorted(root.glob("*.json")):
+        with _locked(path):
+            record = _read_outbox(path)
+            if not record or record.get("event_id"):
+                continue
+            moment = time.time() if now is None else float(now)
+            if float(record.get("next_attempt") or 0) > moment:
+                continue
+            event = record.get("event")
+            key = record.get("key")
+            if not isinstance(event, dict) or not key:
+                continue
+        try:
+            _status, event_id, receipt = _send_event(client, event, key)
+        except Exception as error:
+            with _locked(path):
+                record = _read_outbox(path) or record
+                attempts = int(record.get("attempts") or 0) + 1
+                record["attempts"] = attempts
+                record["last_error"] = str(error)[:500]
+                record["next_attempt"] = moment + min(300, 30 * (2 ** min(attempts, 3)))
+                _write_outbox(path, record)
+            failed += 1
+            continue
+        with _locked(path):
+            record = _read_outbox(path) or record
+            record["event_id"] = event_id
+            record["receipt"] = receipt
+            record["sent_at"] = _now()
+            record["last_error"] = ""
+            record["next_attempt"] = 0
+            _write_outbox(path, record)
+        sent += 1
+    return {"sent": sent, "failed": failed, "pending": pending_core_events(state_dir)}

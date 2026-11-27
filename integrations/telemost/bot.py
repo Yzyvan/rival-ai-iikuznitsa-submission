@@ -714,6 +714,8 @@ class TelemostBot:
         if track_key.startswith("track:") and speaker == "Общий поток":
             speaker = "Участник " + track_key.rsplit(":", 1)[-1][-4:]
         seconds = len(pcm) / 32000
+        start_offset = max(0.0, (idx - 1) * float(self.args.chunk_seconds))
+        end_offset = start_offset + seconds
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", track_key)
         wav_path = self.audio_dir / f"chunk-{safe}-{idx:04d}.wav"
         wav_path.write_bytes(pcm16_to_wav(pcm))
@@ -733,7 +735,11 @@ class TelemostBot:
             text = await asyncio.to_thread(self.transcriber.transcribe, pcm)
         except Exception as e:
             self.stats["stt_errors"] += 1
-            self.event("stt_error", track=track_key, speaker=speaker, index=idx, error=str(e))
+            self.event(
+                "stt_error", track=track_key, speaker=speaker, index=idx,
+                start_offset=round(start_offset, 1), end_offset=round(end_offset, 1),
+                error=str(e),
+            )
             self.say(f"STT ошибка на куске {idx} ({speaker}): {e}")
             return
         self.stats["stt_calls"] += 1

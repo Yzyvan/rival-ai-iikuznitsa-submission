@@ -5,12 +5,12 @@
 
 ## Что здесь есть
 
-- `bot.py` — headless-бот комнаты: вход, аватар, захват дорожек, транскрипт.
+- `bot.py` — headless-бот комнаты: вход, аватар, захват дорожек, транскрипт и интервалы потери STT.
 - `telemost_inject.js` — инъекция камеры/микрофона и перехват WebRTC-аудио.
 - `stt.py` — Yandex SpeechKit / Groq Whisper.
 - `create_meeting.py`, `find_link.py` — создание комнаты и поиск ссылки.
 - `tasks.py` — экспорт поручений из уже утверждённого `protocol.approved.json`.
-- `core_event.py` — сборка события `meeting` для `POST /v1/events`, атомарный outbox и чтение квитанции.
+- `core_event.py` — сборка события `meeting`, атомарный outbox, автоповтор после рестарта и чтение квитанции.
 - `test_core_event.py` — проверка формы события, повтора после потери ответа и конфликта данных.
 - `stt.py` — Groq Whisper; HTTP-ошибка отличается от успешной пустой расшифровки.
 - `test_stt.py` — loopback-проверка HTTP-статусов Groq без ключа и комнаты.

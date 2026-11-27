@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -70,6 +71,8 @@ class CoreEventTest(unittest.TestCase):
         self.assertEqual(event["data"]["calendar_ref"], "daily-01/20261208")
         self.assertEqual(event["data"]["fragment_id"], "m1:3")
         self.assertTrue(event["data"]["recording_skipped"])
+        self.assertEqual(event["data"]["gaps"], [])
+        self.assertTrue(event["data"]["transcript_complete"])
         self.assertIn("Мария", event["data"]["quote"])
         self.assertEqual(event["data"]["protocol"]["tasks"][0]["owner"], "Мария")
 
@@ -84,6 +87,33 @@ class CoreEventTest(unittest.TestCase):
         )
         self.assertIn("Мария, подготовь отчёт", event["data"]["quote"])
         self.assertNotEqual(event["data"]["quote"], "10:00:00")
+
+    def test_gaps_are_passed_to_core(self):
+        gaps = [{"track": "mix", "speaker": "Иван", "start": 10.0, "end": 20.0, "reason": "429"}]
+        event, _ = core_event.build_meeting_event(MEETING, PROTOCOL, gaps=gaps)
+        self.assertEqual(event["data"]["gaps"], gaps)
+        self.assertFalse(event["data"]["transcript_complete"])
+
+    def test_retry_after_restart_sends_stored_event(self):
+        fake = LostResponseTransport()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(TimeoutError):
+                core_event.submit_meeting_event(
+                    MEETING, PROTOCOL, tmp,
+                    base_url="https://core.example", token="token",
+                    transport=fake, transcript_text="[10:00:00] [Иван] Начали.\n",
+                )
+            result = core_event.retry_core_outbox(
+                tmp, "https://core.example", "token",
+                transport=fake, now=time.time() + 1000,
+            )
+            records = list((Path(tmp) / "core_outbox").glob("*.json"))
+            record = json.loads(records[0].read_text(encoding="utf-8"))
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(result["pending"], 0)
+        self.assertEqual(len(fake.sent), 2)
+        self.assertEqual(fake.sent[0], fake.sent[1])
+        self.assertEqual(record["event_id"], "evt-1")
 
     def test_naive_start_gets_meeting_timezone(self):
         meeting = dict(MEETING)
