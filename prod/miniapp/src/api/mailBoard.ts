@@ -30,13 +30,15 @@ const browserTestCode = (() => {
   return code;
 })();
 
-export async function fetchBoardData(path: string, signal: AbortSignal) {
+export async function fetchBoardData(path: string, signal?: AbortSignal, body?: object) {
   const launch = new URLSearchParams(location.hash.slice(1)).get("tgWebAppData") || telegramWebApp()?.initData;
   const authorization = launch ? "tma " + launch : browserTestCode && "vilar-test " + browserTestCode;
   if (!authorization) throw new TelegramLaunchError("Откройте Vilar по тестовой ссылке или через меню бота @vilar_ai_bot.");
 
   const response = await fetch(path, {
-    headers: { Authorization: authorization },
+    method: body ? "POST" : "GET",
+    body: body ? JSON.stringify(body) : undefined,
+    headers: { Authorization: authorization, ...(body && { "Content-Type": "application/json" }) },
     cache: "no-store",
     redirect: "error",
     signal,
