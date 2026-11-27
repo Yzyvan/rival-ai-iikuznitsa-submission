@@ -1,5 +1,6 @@
 """Vilar v1 transport for provider events. Callers retain their retry key."""
 import json
+import re
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
@@ -19,6 +20,9 @@ class SourceClient:
         self.http = build_opener(ProxyHandler({}), NoRedirect())
 
     def request(self, path, event=None, key=None):
+        # Header validation errors in http.client can echo the complete credential.
+        if not isinstance(self.token, str) or not re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", self.token):
+            raise ValueError("Invalid Core bearer token")
         headers = {"Authorization": "Bearer " + self.token}
         data = None
         if event is not None:

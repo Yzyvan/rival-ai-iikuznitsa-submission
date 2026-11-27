@@ -115,6 +115,21 @@ class CoreEventTest(unittest.TestCase):
         self.assertEqual(fake.sent[0], fake.sent[1])
         self.assertEqual(record["event_id"], "evt-1")
 
+    def test_invalid_credential_is_never_written_to_retry_errors(self):
+        marker = "synthetic-private-marker"
+        for invalid in (marker + "\r\n", marker + "☃", marker + "\x00"):
+            with self.subTest(), tempfile.TemporaryDirectory() as tmp:
+                core_event.submit_meeting_event(MEETING, PROTOCOL, tmp)
+                client = core_event.SourceClient("http://127.0.0.1:1", invalid)
+                with self.assertRaisesRegex(ValueError, "^Invalid Core bearer token$"):
+                    client.read("test-event")
+                result = core_event.retry_core_outbox(tmp, "http://127.0.0.1:1", invalid)
+                self.assertEqual(result, {"sent": 0, "failed": 1, "pending": 1})
+                path, = (Path(tmp) / "core_outbox").glob("*.json")
+                stored = path.read_text()
+                self.assertEqual(json.loads(stored)["last_error"], "Invalid Core bearer token")
+                self.assertNotIn(marker, stored)
+
     def test_naive_start_gets_meeting_timezone(self):
         meeting = dict(MEETING)
         meeting["start"] = "2026-12-07T11:00:00"
@@ -130,8 +145,14 @@ class CoreEventTest(unittest.TestCase):
 
     def test_dry_run_writes_event(self):
         with tempfile.TemporaryDirectory() as tmp:
-            result = core_event.submit_meeting_event(MEETING, PROTOCOL, tmp)
+            fake = FakeTransport()
+            result = core_event.submit_meeting_event(
+                MEETING, PROTOCOL, tmp, base_url="https://core.example",
+                token="token", dry_run=True, transport=fake,
+            )
             self.assertEqual(result["mode"], "dry_run")
+            self.assertEqual(fake.sent, [])
+            self.assertEqual(core_event.pending_core_events(tmp), 0)
             rows = [json.loads(line) for line in Path(result["path"]).read_text().splitlines()]
             self.assertEqual(rows[-1]["key"], "meeting/m1/3")
             self.assertEqual(rows[-1]["event"]["source"]["object"], "room-1")

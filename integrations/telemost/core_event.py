@@ -194,12 +194,12 @@ def submit_meeting_event(
     base_url: str = "",
     token: str = "",
     transport=None,
+    dry_run: bool = False,
     transcript_text: str = "",
     gaps: list[dict] | None = None,
-    dry_run: bool = False,
 ) -> dict:
     event, key = build_meeting_event(meeting, protocol, transcript_text, gaps=gaps)
-    if dry_run or not (base_url and token):
+    if dry_run:
         path = Path(state_dir) / "core_events.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as stream:
@@ -225,6 +225,11 @@ def submit_meeting_event(
             )
         else:
             event = record["event"]
+        if not (base_url and token):
+            if record.get("event_id"):
+                return {"mode": "sent", "key": key, "event_id": record["event_id"],
+                        "receipt": record.get("receipt")}
+            return {"mode": "queued", "key": key}
 
     client = transport or SourceClient(base_url, token)
     status, event_id, receipt = _send_event(client, event, key)
