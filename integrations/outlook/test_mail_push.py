@@ -73,6 +73,15 @@ class MailPushContractTest(unittest.TestCase):
             def run(command, expected=None):
                 return manage(provider, record, command, expected, callback, "s" * 32, "owner@example.test",
                               None, 45, resource, route)
+            rows.append(mail)
+            with self.assertRaises(ValueError):
+                run("subscribe")
+            with self.assertRaises(ValueError):
+                run("recover")
+            count = len(calls)
+            self.assertEqual(run("unsubscribe"), {"status": "no_owned_subscription"})
+            self.assertEqual(len(calls), count)
+            self.assertEqual(rows.pop(), mail)
             with self.assertRaises(TimeoutError):
                 run("subscribe")
             self.assertFalse(record.exists())
@@ -101,6 +110,15 @@ class MailPushContractTest(unittest.TestCase):
             self.assertEqual(rows, [calendar])
             self.assertFalse(record.exists())
             self.assertEqual(sum(c[0] == "remove" for c in calls), 1)
+            self.assertEqual(run("unsubscribe"), {"status": "no_owned_subscription"})
+            with self.assertRaises(TimeoutError):
+                run("subscribe")
+            run("recover")
+            rows.remove(mail)  # Simulate provider expiration of our recorded rule.
+            self.assertEqual(run("unsubscribe")["status"], "removed")
+            self.assertFalse(record.exists())
+            self.assertEqual(sum(c[0] == "remove" for c in calls), 1)
+            self.assertEqual(run("unsubscribe"), {"status": "no_owned_subscription"})
 
 
 if __name__ == "__main__":

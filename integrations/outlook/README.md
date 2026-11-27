@@ -41,4 +41,6 @@ After a lost create response, recover verifies the exact marked rule and restore
 its ID. A missing match after an uncertain create blocks a second POST. When the
 ID file is lost, unsubscribe without --expected-id can resolve the same unique
 marked rule and confirm its removal. An expired test with an unresolved intent
-can be examined without restarting intake.
+can be examined without restarting intake. An empty local state returns
+no_owned_subscription on cancellation, even if another rule uses the URL. A
+recorded creation intent is required for recovery or cancellation of a remote rule.

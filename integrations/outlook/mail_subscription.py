@@ -58,9 +58,13 @@ def belongs(rule, identity):
 def manage(provider, record, command, expected, callback, state, account, app, minutes, resource, route):
     if not 45 <= minutes <= 720 or len(state) < 32:
         raise ValueError("invalid lifetime or client state")
-    identity, match = prepare(provider, callback, resource, route, app, account)
     intent = record.with_name("subscription-intent.json")
     saved = json.loads(intent.read_text()) if intent.exists() else None
+    if command == "unsubscribe" and not saved and not record.exists():
+        return {"status": "no_owned_subscription"}
+    if command in ("recover", "renew", "unsubscribe") and not saved:
+        raise ValueError("no recorded creation intent; subscription ownership is unproven")
+    identity, match = prepare(provider, callback, resource, route, app, account)
     if saved and saved["identity"] != identity:
         raise ValueError("mailbox or callback changed since the original request")
     local_id = record.read_text().strip() if record.exists() else None
@@ -94,7 +98,7 @@ def manage(provider, record, command, expected, callback, state, account, app, m
         durable_write(record, match["id"])
         return match
     sid = local_id or (match and match["id"])
-    if not sid or (command == "unsubscribe" and not (expected or match)):
+    if not sid:
         raise ValueError("cannot identify the exact mail subscription")
     # Re-read the exact rule immediately before a mutation, also after a lost DELETE.
     current = provider("inspect", subscriptionId=sid)
