@@ -41,18 +41,27 @@ function homeOf(sheet: string): { tab: TabId; stage?: StageId } | undefined {
   return undefined;
 }
 
-export function readDeepLink(nested: Record<string, unknown>): DeepLink {
+export function readDeepLink(nested: Record<string, unknown>, live = false): DeepLink {
   const { targets, skip } = rawTargets();
   const link: DeepLink = { skip, screens: [] };
   for (const t of targets) {
     const cut = t.indexOf(":"), kind = t.slice(0, cut), id = t.slice(cut + 1);
     if (kind === "tab" && TABS.includes(id as TabId)) link.tab = id as TabId;
     else if (kind === "board" && id in boards) { link.tab = "board"; link.stage = id as StageId; }
+    else if (live && kind === "screen" && ["protocol", "delivery", "delivery-done"].includes(id)) {
+      link.tab = "board"; link.stage = "meetings";
+    }
+    else if (live && kind === "screen" && id === "task") link.tab = "tasks";
     else if (kind === "screen" && id in nested) link.screens.push(id);
     else if (kind === "sheet" && (id in sheets || id === "newtask" || id === "filter")) link.sheet = id;
   }
   if (link.sheet === "filter" && !link.tab) link.tab = "tasks";   // фильтр живёт в Тасках
   if (link.sheet && !link.tab && !link.screens.length) Object.assign(link, homeOf(link.sheet));
+  if (live && link.sheet) {
+    // Older bot cards identify a demo sheet rather than a backend record. Open its live list.
+    if (/^task\d+$/.test(link.sheet) || link.sheet === "newtask") link.tab = "tasks";
+    delete link.sheet;
+  }
   // открыли по ссылке на конкретное место — сразу туда, без прелоудера
   if (link.tab || link.screens.length || link.sheet) link.skip = true;
   return link;

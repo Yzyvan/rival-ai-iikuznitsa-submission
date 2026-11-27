@@ -4,7 +4,7 @@ import type { SheetData } from "../data/sheets";
 import { Button, DraftCard, Status, Tags, VilarMessage } from "../ui";
 
 /** Шторка поверх экрана. Закрывается по затемнению и по кнопке; действие может показать тост или увести на экран. */
-export function SheetView({ sheet: s, onAction, onDecision }: { sheet: SheetData; onAction: (to: string) => void; onDecision?: (to: string) => Promise<void> }) {
+export function SheetView({ sheet: s, onAction, onDecision, children }: { children?: React.ReactNode; sheet: SheetData; onAction: (to: string) => void; onDecision?: (to: string) => Promise<void> }) {
   const [closing, setClosing] = useState(false);
   const busy = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -35,6 +35,7 @@ export function SheetView({ sheet: s, onAction, onDecision }: { sheet: SheetData
           <h2 className={s.quote ? "t-title-m" : "t-title-l"}>{s.title}</h2>
           {s.tags && <Tags items={s.tags} />}
         </div>
+        {children}
         {s.msg && <VilarMessage text={s.msg} />}
         {s.draft && <DraftCard caption="Уйдёт от вашего имени" text={s.draft} />}
         {error && <p role="alert" className="t-body-m">{error}</p>}

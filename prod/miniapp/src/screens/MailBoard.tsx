@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchImportedMail, TelegramLaunchError, telegramWebApp, type ImportedMail } from "../api/mailBoard";
 import { createPortal } from "react-dom";
+import { BoardDocument } from "./BoardDocument";
 import { SheetView } from "./SheetView";
 import { ListRow, Section } from "../ui";
 
@@ -49,7 +50,7 @@ export function MailBoard({ mail }: { mail: ReturnType<typeof useImportedMail> }
           title: selected.title,
           tags: ["Outlook", snapshotDate(selected)],
           actions: [["Закрыть", "ghost", "close"]],
-        }} onAction={() => setSelected(null)} />,
+        }} onAction={() => setSelected(null)}><BoardDocument kind="mail" id={selected.id} /></SheetView>,
         document.querySelector(".app")!,
       )}
     </Section>

@@ -5,18 +5,18 @@ import { Avatar, IconButton, ListRow, LoadBadge, Mark, Section, Wordmark } from 
 import { useNav } from "../nav";
 import { whoop } from "../haptics";
 import { MailBoard, useImportedMail } from "./MailBoard";
-import { isBrowserTest } from "../api/mailBoard";
+import { hasAccountLaunch } from "../api/mailBoard";
 import { LiveApprovals, useApprovals } from "./LiveOverview";
 
 /** Доска: три этапа. Сверху на красной подложке — то, что ждёт решения, ниже — то, что Vilar сделал сам. */
 export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId) => void }) {
   const nav = useNav();
   const data = boards[stage];
-  const approvals = useApprovals(isBrowserTest);
-  const liveApprovals = isBrowserTest && stage === "approvals";
+  const approvals = useApprovals(hasAccountLaunch);
+  const liveApprovals = hasAccountLaunch && stage === "approvals";
   const isCalendar = stage === "meetings";
   const calendar = useCalendar(true);
-  const heroLoad = isBrowserTest
+  const heroLoad = hasAccountLaunch
     ? loadOf(calendar.pending.length + (approvals.data?.rows.length ?? 0))
     : isCalendar && calendar.pending.length ? "red" : load;
   const hero = glowFor(heroLoad);
@@ -71,12 +71,12 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
   return (
     <div className="screen screen--surface">
       <div className="scroll">
-        <div className="board-date"><span className="date-chip t-caption-medium">{isCalendar || isBrowserTest ? new Date().toLocaleDateString("ru-RU", {day:"numeric", month:"long", timeZone:"Europe/Moscow"}) : today}</span></div>
+        <div className="board-date"><span className="date-chip t-caption-medium">{isCalendar || hasAccountLaunch ? new Date().toLocaleDateString("ru-RU", {day:"numeric", month:"long", timeZone:"Europe/Moscow"}) : today}</span></div>
         <header className="header header--board">
           <IconButton icon="bell" label="Уведомления" onClick={() => nav("screen:notifications")} />
           {/* логотип из прелоудера: знак + надпись, высота 18, прозрачность 30% */}
           <span className="board-logo" role="img" aria-label="Vilar"><Mark width={26.6} color="#fff" /><Wordmark height={13.7} color="#fff" /></span>
-          <Avatar initials={isBrowserTest ? "А" : userInitials} onClick={() => nav("screen:profile")} />
+          <Avatar initials={hasAccountLaunch ? "А" : userInitials} onClick={() => nav("screen:profile")} />
         </header>
 
         <div ref={wrap} style={{ position: "relative" }}>
@@ -88,7 +88,7 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
                   {s.label}
                   {s.id !== stage && (s.id === "mail"
                     ? mail.messages && <LoadBadge count={mail.messages.length} />
-                    : s.id === "meetings" ? calendar.meetings && <LoadBadge count={calendar.pending.length} /> : isBrowserTest ? approvals.data && <LoadBadge count={approvals.data.rows.length} /> : <LoadBadge count={s.count} />)}
+                    : s.id === "meetings" ? calendar.meetings && <LoadBadge count={calendar.pending.length} /> : hasAccountLaunch ? approvals.data && <LoadBadge count={approvals.data.rows.length} /> : <LoadBadge count={s.count} />)}
                 </button>
               ))}
             </div>

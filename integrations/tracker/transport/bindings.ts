@@ -81,7 +81,9 @@ function launchHeaders(): Record<string, string> {
   const launch = telegram?.WebApp?.initData || new URLSearchParams(location.hash.slice(1)).get("tgWebAppData");
   if (launch) return { Authorization: "tma " + launch };
   const code = browserTestCode();
-  return code ? { Authorization: "vilar-test " + code } : {};
+  if (!code) return {};
+  const editable = sessionStorage.getItem("vilar:link-editable") === "true";
+  return { Authorization: (editable ? "vilar-edit " : "vilar-test ") + code };
 }
 export const taskPath = (id: string) => "tasks/" + encodeURIComponent(id);
 
