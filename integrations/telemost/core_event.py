@@ -196,9 +196,10 @@ def submit_meeting_event(
     transport=None,
     transcript_text: str = "",
     gaps: list[dict] | None = None,
+    dry_run: bool = False,
 ) -> dict:
     event, key = build_meeting_event(meeting, protocol, transcript_text, gaps=gaps)
-    if not (base_url and token):
+    if dry_run or not (base_url and token):
         path = Path(state_dir) / "core_events.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as stream:

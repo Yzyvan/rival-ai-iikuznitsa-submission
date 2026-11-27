@@ -149,6 +149,18 @@ class CoreEventTest(unittest.TestCase):
         self.assertEqual(fake.sent[0][1], "meeting/m1/3")
         self.assertEqual(fake.reads, ["evt-1"])
 
+    def test_dry_run_overrides_configured_core(self):
+        fake = FakeTransport()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = core_event.submit_meeting_event(
+                MEETING, PROTOCOL, tmp,
+                base_url="https://core.example", token="token",
+                transport=fake, dry_run=True,
+            )
+            self.assertEqual(result["mode"], "dry_run")
+            self.assertEqual(fake.sent, [])
+            self.assertTrue(Path(result["path"]).is_file())
+
     def test_lost_response_retry_uses_stored_event(self):
         fake = LostResponseTransport()
         with tempfile.TemporaryDirectory() as tmp:
