@@ -81,18 +81,42 @@ class YandexTranscriber(Transcriber):
         return str(payload.get("result") or "").strip()
 
 
+GROQ_TRANSCRIBE_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+
+
+def _curl_response(stdout: str) -> tuple[str, int]:
+    raw = stdout or ""
+    marker = "\nHTTP_STATUS:"
+    if marker not in raw:
+        raise STTError("Groq STT: no HTTP status")
+    body, status_text = raw.rsplit(marker, 1)
+    try:
+        status = int(status_text.strip())
+    except ValueError as error:
+        raise STTError(f"Groq STT: invalid HTTP status {status_text!r}") from error
+    return body, status
+
+
 class GroqTranscriber(Transcriber):
     name = "groq"
 
-    def __init__(self, api_key: str, model: str = "whisper-large-v3-turbo", lang: str = "ru"):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "whisper-large-v3-turbo",
+        lang: str = "ru",
+        base_url: str = GROQ_TRANSCRIBE_URL,
+    ):
         self.api_key = api_key
         self.model = model
         self.lang = lang
+        self.base_url = base_url
 
     def transcribe(self, pcm: bytes) -> str:
         wav = pcm16_to_wav(pcm)
         cfg = tempfile.NamedTemporaryFile("w", suffix=".curlrc", delete=False)
         audio_path = ""
+        proc = None
         try:
             os.chmod(cfg.name, 0o600)
             cfg.write(f'header = "Authorization: Bearer {self.api_key}"\n')
@@ -107,9 +131,13 @@ class GroqTranscriber(Transcriber):
                 "-F", f"model={self.model}",
                 "-F", f"language={self.lang}",
                 "-F", "response_format=json",
-                "https://api.groq.com/openai/v1/audio/transcriptions",
+                "-w", "\nHTTP_STATUS:%{http_code}",
+                self.base_url,
             ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            except Exception as error:
+                raise STTError(f"Groq curl: {error}") from error
         finally:
             try:
                 os.unlink(cfg.name)
@@ -120,13 +148,28 @@ class GroqTranscriber(Transcriber):
                     os.unlink(audio_path)
                 except OSError:
                     pass
+        if proc is None:
+            raise STTError("Groq curl: no process result")
         if proc.returncode != 0:
             raise STTError(f"Groq curl {proc.returncode}: {(proc.stderr or '')[:500]}")
+        raw, status = _curl_response(proc.stdout or "")
+        if not 200 <= status < 300:
+            raise STTError(f"Groq STT HTTP {status}: {raw.strip()[:500]}")
         try:
-            payload = json.loads(proc.stdout)
-        except Exception as e:
-            raise STTError(f"Groq invalid response: {(proc.stdout or '')[:500]}") from e
-        return str(payload.get("text") or "").strip()
+            payload = json.loads(raw)
+        except Exception as error:
+            raise STTError(f"Groq invalid response: {raw[:500]}") from error
+        if not isinstance(payload, dict):
+            raise STTError(f"Groq invalid response: {raw[:500]}")
+        if payload.get("error"):
+            raise STTError(
+                f"Groq STT error: {json.dumps(payload['error'], ensure_ascii=False)[:500]}"
+            )
+        if "text" not in payload:
+            raise STTError(f"Groq STT response without text: {raw[:500]}")
+        value = payload["text"]
+        return "" if value is None else str(value)
+
 
 def build_transcriber(kind: str) -> Transcriber:
     kind = (kind or "auto").lower()
