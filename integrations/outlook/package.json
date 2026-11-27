@@ -3,6 +3,7 @@
     "test": "node --test outlook.test.cjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
     "@softeria/ms-365-mcp-server": "0.191.1"
   }
 }
