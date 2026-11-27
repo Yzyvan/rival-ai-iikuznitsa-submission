@@ -2,7 +2,6 @@
 import argparse
 import asyncio
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import hmac
@@ -176,28 +175,19 @@ def process_one(db, fetch, core):
     return True
 
 
-def remove_subscription(provider, subscription, expected, callback):
-    if not expected or expected != subscription.read_text().strip():
-        raise ValueError("requested subscription differs from the recorded mail subscription")
-    args = {"subscriptionId": expected}
-    current = provider("inspect", **args)
-    if current is not None:
-        if (current.get("id") != expected or current.get("notificationUrl") != callback
-                or current.get("resource", "").strip("/").lower() != RESOURCE.strip("/").lower()
-                or current.get("changeType") != "created"):
-            raise ValueError("subscription does not match the temporary mail input")
-        provider("remove", **args, confirm=True)
-        if provider("inspect", **args) is not None:
-            raise RuntimeError("provider has not confirmed removal")
-    subscription.unlink()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["serve", "work", "status", "subscribe", "renew", "unsubscribe"])
+    parser.add_argument("command", choices=["serve", "work", "status", "subscribe", "renew", "unsubscribe", "recover", "preflight"])
     parser.add_argument("--expected-id", help="exact recorded mail subscription to remove")
+    parser.add_argument("--ttl-minutes", type=int, default=45)
     args = parser.parse_args()
     os.umask(0o077)
+    if args.command == "preflight":
+        from mail_subscription import prepare
+        _, match = prepare(graph, os.environ["VILAR_MAIL_CALLBACK"], RESOURCE, CALLBACK,
+                           os.getenv("MS365_MCP_CLIENT_ID"), os.environ["VILAR_OUTLOOK_ACCOUNT"].lower())
+        print(json.dumps({"status": "matched" if match else "vacant"}))
+        return
     directory = Path(os.environ["VILAR_MAIL_PUSH_DIR"])
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = directory / "inbox.sqlite3"
@@ -227,28 +217,11 @@ def main():
             # Serialize operator changes to this mailbox's recorded rule.
             with (directory / "subscription.lock").open("a") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX)
-                manage_subscription(args, parser, subscription)
-
-
-def manage_subscription(args, parser, subscription):
-    if args.command == "unsubscribe":
-        remove_subscription(graph, subscription, args.expected_id, os.environ["VILAR_MAIL_CALLBACK"])
-        return
-    # This is an explicit operator action on the test mailbox.
-    until = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
-    body = {"expirationDateTime": until}
-    if args.command == "subscribe":
-        if subscription.exists():
-            parser.error("subscription already recorded; use renew")
-        state = os.environ["VILAR_MAIL_CLIENT_STATE"]
-        url = os.environ["VILAR_MAIL_CALLBACK"]
-        if len(state) < 32 or urlsplit(url).scheme != "https" or urlsplit(url).path != CALLBACK:
-            parser.error("invalid HTTPS callback or client state")
-        body.update(resource=RESOURCE, notificationUrl=url, clientState=state, changeType="created")
-        result = graph("create", body=body)
-        subscription.write_text(result["id"])
-    else:
-        graph("renew", subscriptionId=subscription.read_text().strip(), body=body)
+                from mail_subscription import manage
+                result = manage(graph, subscription, args.command, args.expected_id,
+                                os.environ["VILAR_MAIL_CALLBACK"], os.environ["VILAR_MAIL_CLIENT_STATE"],
+                                account, os.getenv("MS365_MCP_CLIENT_ID"), args.ttl_minutes, RESOURCE, CALLBACK)
+                print(json.dumps({k: result[k] for k in ("id","expirationDateTime","status") if k in result}))
 
 
 if __name__ == "__main__":

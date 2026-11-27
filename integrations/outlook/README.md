@@ -30,3 +30,15 @@ To end a temporary Inbox subscription, use mail_push.py unsubscribe --expected-i
 with its original mail state directory and HTTPS callback. The command checks the
 recorded ID, resource, callback and change type before deletion and verifies a
 provider 404 before removing the local subscription record.
+
+The temporary rule uses the exact existing URL with ?vilar_mail_pilot=1.
+preflight reads the authenticated user and subscription inventory without writing
+local state. The app ID comes from MS365_MCP_CLIENT_ID or the existing calendar
+rule on the unmarked URL for the same user. A foreign or ambiguous rule, missing
+ownership evidence or an incomplete inventory stops the request.
+subscribe defaults to 45 minutes. Override with --ttl-minutes (45 through 720).
+After a lost create response, recover verifies the exact marked rule and restores
+its ID. A missing match after an uncertain create blocks a second POST. When the
+ID file is lost, unsubscribe without --expected-id can resolve the same unique
+marked rule and confirm its removal. An expired test with an unresolved intent
+can be examined without restarting intake.
