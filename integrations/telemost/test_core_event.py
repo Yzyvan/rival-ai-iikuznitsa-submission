@@ -53,6 +53,11 @@ class CoreEventTest(unittest.TestCase):
         self.assertEqual(event["source"]["object"], "room-1")
         self.assertEqual(event["source"]["thread"], "m1")
         self.assertEqual(event["source"]["revision"], "3")
+        self.assertNotIn("received_at", event["source"])
+        self.assertEqual(set(event["source"]), {
+            "provider", "account", "channel", "object", "revision", "thread",
+            "reply_to", "actor_external", "occurred_at", "change",
+        })
         self.assertEqual(event["data"]["calendar_ref"], "daily-01/20261208")
         self.assertEqual(event["data"]["fragment_id"], "m1:3")
         self.assertTrue(event["data"]["recording_skipped"])
@@ -70,6 +75,19 @@ class CoreEventTest(unittest.TestCase):
         )
         self.assertIn("Мария, подготовь отчёт", event["data"]["quote"])
         self.assertNotEqual(event["data"]["quote"], "10:00:00")
+
+    def test_naive_start_gets_meeting_timezone(self):
+        meeting = dict(MEETING)
+        meeting["start"] = "2026-12-07T11:00:00"
+        meeting["timezone"] = "Europe/Moscow"
+        event, _ = core_event.build_meeting_event(meeting, PROTOCOL)
+        self.assertTrue(event["source"]["occurred_at"].endswith("+03:00"))
+
+    def test_transcript_is_passed_to_core(self):
+        event, _ = core_event.build_meeting_event(
+            MEETING, PROTOCOL, "[10:00:00] [Иван] Начали.\n"
+        )
+        self.assertTrue(event["data"]["transcript"].startswith("[10:00:00]"))
 
     def test_dry_run_writes_event(self):
         with tempfile.TemporaryDirectory() as tmp:

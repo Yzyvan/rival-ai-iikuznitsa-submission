@@ -5,6 +5,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import sys
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sources.client import SourceClient
 
 ROOM_RE = re.compile(r"/j/([A-Za-z0-9_-]+)")
+MAX_TRANSCRIPT_CHARS = 100000
 
 
 def _now() -> str:
@@ -22,6 +24,21 @@ def _now() -> str:
 def _room_id(link: str) -> str:
     match = ROOM_RE.search(link or "")
     return match.group(1) if match else ""
+
+
+def _occurred_at(meeting: dict) -> str:
+    raw = str(meeting.get("start") or "").strip()
+    if not raw:
+        return _now()
+    try:
+        moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    if moment.tzinfo is None:
+        moment = moment.replace(
+            tzinfo=ZoneInfo(str(meeting.get("timezone") or "Europe/Moscow"))
+        )
+    return moment.isoformat()
 
 
 def _line_for_source(source: str, transcript_text: str) -> str:
@@ -49,7 +66,7 @@ def _quote(protocol: dict, transcript_text: str = "") -> str:
 def build_meeting_event(meeting: dict, protocol: dict, transcript_text: str = "") -> tuple[dict, str]:
     meeting_id = str(meeting.get("id") or "")
     revision = str(meeting.get("revision") or 1)
-    start = str(meeting.get("start") or "").strip() or _now()
+    start = _occurred_at(meeting)
     room = _room_id(str(meeting.get("link") or "")) or meeting_id
     event = {
         "source": {
@@ -62,7 +79,6 @@ def build_meeting_event(meeting: dict, protocol: dict, transcript_text: str = ""
             "reply_to": None,
             "actor_external": str(meeting.get("organizer_email") or "") or None,
             "occurred_at": start,
-            "received_at": _now(),
             "change": "create",
         },
         "data": {
@@ -75,6 +91,8 @@ def build_meeting_event(meeting: dict, protocol: dict, transcript_text: str = ""
             "calendar_ref": str(meeting.get("source_ref") or "") or None,
             "attendance": str(meeting.get("attendance") or "bot"),
             "protocol": protocol,
+            "transcript": (transcript_text or "")[:MAX_TRANSCRIPT_CHARS],
+            "transcript_format": "[HH:MM:SS] [speaker] text",
         },
     }
     return event, f"meeting/{meeting_id}/{revision}"
