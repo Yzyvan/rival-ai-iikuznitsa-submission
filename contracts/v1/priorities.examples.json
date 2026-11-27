@@ -1,0 +1,121 @@
+[
+  {
+    "case": "Близкий срок",
+    "request": "GET /v1/priorities",
+    "http_status": 200,
+    "body": {
+      "status": "ready",
+      "list_id": "example-s1",
+      "position": 2,
+      "computed_at": "2027-06-06T12:00:00+03:00",
+      "profile_version": 1,
+      "policy_version": "tiers-v1",
+      "feedback_enabled": false,
+      "actions": [
+        {
+          "action_id": "s1~work",
+          "step_id": "s1",
+          "title": "Согласовать договор",
+          "next_actor_id": "p01",
+          "kind": "work",
+          "tier": 0,
+          "reason_code": "near_due",
+          "reason_text": "Близкий срок обязательства",
+          "source_ref": "/v1/tasks/s1",
+          "due_at": "2027-06-06",
+          "expected_response_at": null,
+          "check_at": null,
+          "version": 2
+        }
+      ]
+    }
+  },
+  {
+    "case": "Блокирующее решение",
+    "request": "GET /v1/priorities",
+    "http_status": 200,
+    "body": {
+      "status": "ready",
+      "list_id": "example-s2",
+      "position": 2,
+      "computed_at": "2027-06-06T12:00:00+03:00",
+      "profile_version": 1,
+      "policy_version": "tiers-v1",
+      "feedback_enabled": false,
+      "actions": [
+        {
+          "action_id": "s2~decision",
+          "step_id": "s2",
+          "title": "Согласовать договор",
+          "next_actor_id": "p01",
+          "kind": "decision",
+          "tier": 0,
+          "reason_code": "blocking_decision",
+          "reason_text": "Другие участники ждут решения",
+          "source_ref": "/v1/tasks/s2",
+          "due_at": null,
+          "expected_response_at": null,
+          "check_at": null,
+          "version": 2
+        }
+      ]
+    }
+  },
+  {
+    "case": "Неизвестный следующий исполнитель",
+    "request": "GET /v1/priorities",
+    "http_status": 200,
+    "body": {
+      "status": "ready",
+      "list_id": "example-s3",
+      "position": 2,
+      "computed_at": "2027-06-06T12:00:00+03:00",
+      "profile_version": 1,
+      "policy_version": "tiers-v1",
+      "feedback_enabled": false,
+      "actions": [
+        {
+          "action_id": "s3~clarify",
+          "step_id": "s3",
+          "title": "Согласовать договор",
+          "next_actor_id": "p01",
+          "kind": "clarify",
+          "tier": 2,
+          "reason_code": "unknown_next_actor",
+          "reason_text": "Уточнить, чей следующий ход",
+          "source_ref": "/v1/tasks/s3",
+          "due_at": null,
+          "expected_response_at": null,
+          "check_at": null,
+          "version": 2
+        }
+      ]
+    }
+  },
+  {
+    "case": "Ожидание до конца обещанного дня",
+    "request": "GET /v1/priorities",
+    "http_status": 200,
+    "body": {
+      "status": "ready",
+      "list_id": "example-s4",
+      "position": 2,
+      "computed_at": "2027-06-06T12:00:00+03:00",
+      "profile_version": 1,
+      "policy_version": "tiers-v1",
+      "feedback_enabled": false,
+      "actions": []
+    }
+  },
+  {
+    "case": "Доступ к показанной карточке отозван",
+    "request": "GET /v1/priorities/s1~work",
+    "http_status": 404,
+    "body": {
+      "error": {
+        "code": "unknown_action",
+        "retryable": false
+      }
+    }
+  }
+]
