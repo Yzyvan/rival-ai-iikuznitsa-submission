@@ -105,7 +105,11 @@ export const playGlow = (v: HTMLVideoElement | null) => {
 /** Видео анимированного градиента под текущую нагрузку */
 // base — цвет фона компонента «Animation gradi …» в Figma: под видео, чтобы при запуске не мелькал чёрный
 const GLOW_BASE: Record<Load, string> = { red: "#39000d", yellow: "#895e00", green: "#0f2e1e" };
-export const glow = (() => { const f = `./assets/hero-glow-v3${load === "red" ? "" : `-${load}`}`; return { webm: `${f}.webm`, mp4: `${f}.mp4`, poster: `${f}-poster.jpg`, base: GLOW_BASE[load] }; })();
+export function glowFor(level: Load) {
+  const path = `./assets/hero-glow-v3${level === "red" ? "" : `-${level}`}`;
+  return { webm: `${path}.webm`, mp4: `${path}.mp4`, poster: `${path}-poster.jpg`, base: GLOW_BASE[level] };
+}
+export const glow = glowFor(load);
 
 /* ── Таски: канбан по статусам ── */
 /** project — проект из формы «Новая задача»; задача без проекта — поручение */

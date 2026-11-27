@@ -1,21 +1,25 @@
 import { CalendarBoard, CalendarDecisions, useCalendar } from "./CalendarBoard";
 import { useLayoutEffect, useRef, useState } from "react";
-import { boards, glow, load, playGlow, stages, today, userInitials, type StageId } from "../data/content";
+import { boards, glowFor, load, loadOf, playGlow, stages, today, userInitials, type StageId } from "../data/content";
 import { Avatar, IconButton, ListRow, LoadBadge, Mark, Section, Wordmark } from "../ui";
 import { useNav } from "../nav";
 import { whoop } from "../haptics";
 import { MailBoard, useImportedMail } from "./MailBoard";
+import { isBrowserTest } from "../api/mailBoard";
+import { LiveApprovals, useApprovals } from "./LiveOverview";
 
 /** Доска: три этапа. Сверху на красной подложке — то, что ждёт решения, ниже — то, что Vilar сделал сам. */
 export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId) => void }) {
   const nav = useNav();
   const data = boards[stage];
+  const approvals = useApprovals(isBrowserTest);
+  const liveApprovals = isBrowserTest && stage === "approvals";
   const isCalendar = stage === "meetings";
   const calendar = useCalendar(true);
-  const hero = isCalendar && calendar.pending.length ? {
-    base: "#39000d", poster: "./assets/hero-glow-v3-poster.jpg",
-    webm: "./assets/hero-glow-v3.webm", mp4: "./assets/hero-glow-v3.mp4"
-  } : glow;
+  const heroLoad = isBrowserTest
+    ? loadOf(calendar.pending.length + (approvals.data?.rows.length ?? 0))
+    : isCalendar && calendar.pending.length ? "red" : load;
+  const hero = glowFor(heroLoad);
   const isMail = stage === "mail";
   const mail = useImportedMail();
   const wrap = useRef<HTMLDivElement>(null);
@@ -67,12 +71,12 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
   return (
     <div className="screen screen--surface">
       <div className="scroll">
-        <div className="board-date"><span className="date-chip t-caption-medium">{isCalendar ? new Date().toLocaleDateString("ru-RU", {day:"numeric", month:"long", timeZone:"Europe/Moscow"}) : today}</span></div>
+        <div className="board-date"><span className="date-chip t-caption-medium">{isCalendar || isBrowserTest ? new Date().toLocaleDateString("ru-RU", {day:"numeric", month:"long", timeZone:"Europe/Moscow"}) : today}</span></div>
         <header className="header header--board">
           <IconButton icon="bell" label="Уведомления" onClick={() => nav("screen:notifications")} />
           {/* логотип из прелоудера: знак + надпись, высота 18, прозрачность 30% */}
           <span className="board-logo" role="img" aria-label="Vilar"><Mark width={26.6} color="#fff" /><Wordmark height={13.7} color="#fff" /></span>
-          <Avatar initials={userInitials} onClick={() => nav("screen:profile")} />
+          <Avatar initials={isBrowserTest ? "А" : userInitials} onClick={() => nav("screen:profile")} />
         </header>
 
         <div ref={wrap} style={{ position: "relative" }}>
@@ -84,7 +88,7 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
                   {s.label}
                   {s.id !== stage && (s.id === "mail"
                     ? mail.messages && <LoadBadge count={mail.messages.length} />
-                    : s.id === "meetings" ? calendar.meetings && <LoadBadge count={calendar.pending.length} /> : <LoadBadge count={s.count} />)}
+                    : s.id === "meetings" ? calendar.meetings && <LoadBadge count={calendar.pending.length} /> : isBrowserTest ? approvals.data && <LoadBadge count={approvals.data.rows.length} /> : <LoadBadge count={s.count} />)}
                 </button>
               ))}
             </div>
@@ -92,7 +96,7 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
 
           {/* единая фигура: вкладка + красная подложка; фон — видео с анимированным градиентом.
               При смене этапа вкладка переезжает (меняется контур), видео не перезапускается. */}
-          <div ref={glowBox} className="hero-glow" data-load={isCalendar && calendar.pending.length ? "red" : load} style={{ top: 12, bottom: -40, clipPath: clip || undefined, backgroundImage: `url(${hero.poster})` }}>
+          <div ref={glowBox} className="hero-glow" data-load={heroLoad} style={{ top: 12, bottom: -40, clipPath: clip || undefined, backgroundImage: `url(${hero.poster})` }}>
             <video ref={playGlow} disablePictureInPicture controls={false} autoPlay muted loop playsInline preload="auto" poster={hero.poster} aria-hidden="true">
               <source src={hero.webm} type="video/webm" />
               <source src={hero.mp4} type="video/mp4" />
@@ -102,19 +106,19 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
           <div className="hero">
             <div key={stage} className="hero__body stage-content" style={{ gap: 28 }}>
               <div className="hero__count">
-                <span className="t-hero-number">{isMail ? mail.messages?.length ?? "—" : isCalendar ? (calendar.meetings ? calendar.pending.length : "—") : data.hero.count}</span>
-                <span className="t-body-l">{isMail ? "письма из Outlook" : isCalendar ? (calendar.pending.length === 1 ? "решение по встрече" : "решения по встречам") : data.hero.label}</span>
+                <span className="t-hero-number">{isMail ? mail.messages?.length ?? "—" : isCalendar ? (calendar.meetings ? calendar.pending.length : "—") : liveApprovals ? approvals.data?.rows.length ?? "—" : data.hero.count}</span>
+                <span className="t-body-l">{isMail ? "письма из Outlook" : isCalendar ? (calendar.pending.length === 1 ? "решение по встрече" : "решения по встречам") : liveApprovals ? "на согласовании" : data.hero.label}</span>
               </div>
               <div className="hero__rows">
                 {isCalendar && <CalendarDecisions {...calendar} />}
-                {!isMail && !isCalendar && data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
+                {!isMail && !isCalendar && !liveApprovals && data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
               </div>
             </div>
           </div>
         </div>
 
         <div key={stage} className="board-sheet stage-content">
-          {isMail ? <MailBoard mail={mail} /> : isCalendar ? <CalendarBoard {...calendar} /> : data.sections.map((s) => (
+          {isMail ? <MailBoard mail={mail} /> : isCalendar ? <CalendarBoard {...calendar} /> : liveApprovals ? <LiveApprovals {...approvals} /> : data.sections.map((s) => (
             <Section key={s.title} title={s.title} vilar={s.vilar}>
               {s.rows.map((r) => <ListRow key={r.title} urgent={r.urgent} title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
             </Section>

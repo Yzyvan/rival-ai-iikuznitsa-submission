@@ -68,10 +68,20 @@ class TaskError extends Error {
 const changed = "vilar:tasks-changed";
 export const notifyTasks = () => window.dispatchEvent(new Event(changed));
 const apiBase = "/tracker/api/";
+function browserTestCode() {
+  try {
+    return sessionStorage.getItem("vilar:aegis-test");
+  } catch {
+    return null;
+  }
+}
+
 function launchHeaders(): Record<string, string> {
   const telegram = (window as Window & { Telegram?: { WebApp?: { initData?: string } } }).Telegram;
   const launch = telegram?.WebApp?.initData || new URLSearchParams(location.hash.slice(1)).get("tgWebAppData");
-  return launch ? { Authorization: "tma " + launch } : {};
+  if (launch) return { Authorization: "tma " + launch };
+  const code = browserTestCode();
+  return code ? { Authorization: "vilar-test " + code } : {};
 }
 export const taskPath = (id: string) => "tasks/" + encodeURIComponent(id);
 
@@ -238,7 +248,7 @@ function useList(query: string, assignee: string, column: string) {
 
 function useDetail(id: string) {
   const row = useTaskRead<TaskRecord>(taskPath(id));
-  const identity = useTaskRead<People>(row.data && awaitingSubmission(row.data) ? "people" : null);
+  const identity = useTaskRead<People>(row.data && awaitingSubmission(row.data) && !launchHeaders().Authorization?.startsWith("vilar-test ") ? "people" : null);
   return {
     data: row.data && present(row.data, identity.data?.self_id ?? null),
     error: row.error || identity.error,
