@@ -41,7 +41,7 @@ function homeOf(sheet: string): { tab: TabId; stage?: StageId } | undefined {
   return undefined;
 }
 
-export function readDeepLink(nested: Record<string, unknown>, live = false): DeepLink {
+export function readDeepLink(nested: Record<string, unknown>, live = false, showTracker = false): DeepLink {
   const { targets, skip } = rawTargets();
   const link: DeepLink = { skip, screens: [] };
   for (const t of targets) {
@@ -60,7 +60,8 @@ export function readDeepLink(nested: Record<string, unknown>, live = false): Dee
   if (live && link.sheet) {
     // Older bot cards identify a demo sheet rather than a backend record. Open its live list.
     if (/^task\d+$/.test(link.sheet) || link.sheet === "newtask") link.tab = "tasks";
-    delete link.sheet;
+    const taskSheet = link.sheet === "filter" || link.sheet === "newtask" || /^task\d+$/.test(link.sheet);
+    if (showTracker || link.tab !== "tasks" || !taskSheet) delete link.sheet;
   }
   // открыли по ссылке на конкретное место — сразу туда, без прелоудера
   if (link.tab || link.screens.length || link.sheet) link.skip = true;
