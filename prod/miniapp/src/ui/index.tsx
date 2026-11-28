@@ -194,12 +194,27 @@ export function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabI
 }
 
 /* ── Сообщение Vilar: сводка в шторке — одним сообщением, как в чате Telegram: аватар Vilar слева, пузырь справа ── */
-export function VilarMessage({ text }: { text: string }) {
+/** Сообщение Vilar. side="right" — ответ, который Vilar уже отправил: пузырь справа, как исходящее в чате */
+export function VilarMessage({ text, side, caption = "Vilar" }: { text: string; side?: "right"; caption?: string }) {
   return (
-    <div className="vilar-msg">
+    <div className={`vilar-msg${side === "right" ? " vilar-msg--right" : ""}`}>
       <AIAvatar />
       <div className="vilar-msg__bubble">
-        <span className="t-caption-medium c-brand">Vilar</span>
+        <span className="t-caption-medium c-brand">{caption}</span>
+        <p className="t-body-l">{text}</p>
+      </div>
+    </div>
+  );
+}
+
+/** Входящее сообщение: что человеку прислали, сжато по смыслу. Пузырь слева, сверху — кто написал */
+export function IncomingMessage({ name, text }: { name?: string | null; text: string }) {
+  const initials = name?.trim().split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  return (
+    <div className="vilar-msg vilar-msg--in">
+      {initials && <Avatar initials={initials} size={28} />}
+      <div className="vilar-msg__bubble">
+        {name && <span className="t-caption-medium c-secondary">{name}</span>}
         <p className="t-body-l">{text}</p>
       </div>
     </div>

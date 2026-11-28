@@ -6,9 +6,9 @@ import { canEdit, hasAccountLaunch, fetchImportedMail, type ImportedMail } from 
 import { dayParam, frontAction, frontList, frontMailById, FrontError, isToday, NEEDS_REFRESH, whenLabel, type MailAction, type MailTicket } from "../api/front";
 import { demoMail, DEMO_NOW } from "../data/mailTickets";
 import type { SheetData } from "../data/sheets";
-import { ListRow, Section, Toast, VilarMessage, type StatusSpec } from "../ui";
+import { ListRow, Section, Toast, type StatusSpec } from "../ui";
 import { onToastCommit, useNav } from "../nav";
-import { BoardDocument } from "./BoardDocument";
+import { BoardDocument, MailContent, handledByVilar, hasSentReply } from "./BoardDocument";
 import { notifyAttention } from "../api/attention";
 import { PreviewSheet, isPreview } from "./PreviewSheet";
 import { QuarantineSheet, isQuarantine } from "./QuarantineSheet";
@@ -213,10 +213,11 @@ export function MailSections({ mail, opened, onOpen }: { mail: Mail; opened: str
     };
   }, [opened, poll]);
   const [missingDocument, setMissingDocument] = useState<string | null>(null);
+  const [deniedDocument, setDeniedDocument] = useState<string | null>(null);
   const useOwnerDocument = hasAccountLaunch && ticket?.id !== missingDocument;
   const [draft, setDraft] = useState<string | null>(null);   // правка черновика, пока шторка открыта
   const saving = useRef<Promise<MailTicket | undefined> | null>(null);   // сохранение правки, которое ещё идёт
-  useEffect(() => { setDraft(null); setMissingDocument(null); saving.current = null; }, [opened]);
+  useEffect(() => { setDraft(null); setMissingDocument(null); setDeniedDocument(null); saving.current = null; }, [opened]);
   useEffect(() => { if (!mail.note) return; const t = setTimeout(() => set({ note: null }), 2400); return () => clearTimeout(t); }, [mail.note]);
 
   // решение уходит на сервер, только когда тост с отменой досчитал до конца
@@ -231,6 +232,19 @@ export function MailSections({ mail, opened, onOpen }: { mail: Mail; opened: str
     onToastCommit(() => void seen.then((card) => act(card, action, payload)));
     nav("toast:" + BUTTON[action][2]);
   };
+
+  const deliveredByVilar = handledByVilar(ticket) && hasSentReply(ticket);
+  const preview = ticket && isPreview(ticket) && !(deliveredByVilar && ticket.state === "accepted");
+  const content = ticket && (useOwnerDocument
+    ? <BoardDocument kind="mail" id={ticket.id} ticket={ticket} contentOnly={!!preview}
+        onText={preview ? undefined : setDraft} onMissing={setMissingDocument} onDenied={setDeniedDocument} />
+    : <MailContent ticket={ticket} />);
+  const sheet = ticket && sheetOf(ticket);
+  if (ticket && sheet) {
+    sheet.msg = undefined; // MailContent renders the summary together with the original.
+    if (useOwnerDocument || deliveredByVilar) sheet.draft = undefined;
+    if (ticket.id === deniedDocument || (hasAccountLaunch && !canEdit)) sheet.actions = [["Закрыть", "ghost", "close"]];
+  }
 
   return <>
     {mail.mode === "legacy"
@@ -249,18 +263,22 @@ export function MailSections({ mail, opened, onOpen }: { mail: Mail; opened: str
         </Section>}
       </>}
     {mail.note && <Toast key={mail.note.key} type="Error" text={mail.note.text} />}
-    {ticket && createPortal(
+    {ticket && sheet && createPortal(
       isQuarantine(ticket) ? <QuarantineSheet key={ticket.id} ticket={detail ?? ticket} sheet={sheetOf(ticket)}
         detailReady={Boolean(detail)} onUpdate={refreshDetail} onClose={() => selectMail(null)} /> :
-      isPreview(ticket) ? <PreviewSheet key={ticket.id} ticket={ticket} sheet={sheetOf(ticket)} onUpdate={refreshDetail} onClose={() => selectMail(null)} /> : <SheetView key={ticket.id} sheet={useOwnerDocument ? { ...sheetOf(ticket), msg: undefined, draft: undefined } : sheetOf(ticket)} onAction={(to) => decide(ticket, to)}
+      preview ? <PreviewSheet key={ticket.id} denied={ticket.id === deniedDocument} ticket={ticket} sheet={sheet} onUpdate={refreshDetail} onClose={() => selectMail(null)}>{content}</PreviewSheet> : <SheetView key={ticket.id} sheet={sheet} onAction={(to) => decide(ticket, to)}
         draftReadOnly={(hasAccountLaunch && !canEdit) || !ticket.actions.includes("edit_reply")}
-        draftCaption={ticket.state === "sent" ? "Отправлено от вашего имени" : ticket.state === "sending" ? "Отправляется от вашего имени" : cannotSend(ticket) || ticket.actions.includes("approve_preview") || ticket.state === "approved_preview" ? "Черновик ответа" : undefined}
+        draftCaption={ticket.state === "sent" ? "Отправлено от вашего имени" : ticket.state === "sending" ? "Отправляется от вашего имени" : cannotSend(ticket) || ticket.actions.includes("approve_preview") || ticket.state === "approved_preview" ? "Черновик ответа" : "Черновик ответа в Vilar"}
         note={ticket.actions.includes("approve_preview") || ticket.state === "approved_preview" ? "Отправка отключена на время проверки." : cannotSend(ticket) ? "отправить пока не могу: адрес ответа не подтверждён" : undefined}
-        onDraft={(text) => { setDraft(text); saving.current = act(ticket, "edit_reply", { text }); }}>
-        {useOwnerDocument
-          ? <BoardDocument kind="mail" id={ticket.id} onText={setDraft} onMissing={setMissingDocument} aside={ticket.summary ? <VilarMessage text={ticket.summary} /> : undefined} />
-          // сжимки от Vilar ещё нет — показываем главную фразу письма как есть
-          : !ticket.summary && ticket.quote && <p className="t-body-l" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>«{ticket.quote}»</p>}
+        onDraft={(text) => {
+          setDraft(text);
+          const cycle = openCycle.current;
+          saving.current = act(ticket, "edit_reply", { text }).then(updated => {
+            if (updated) refreshDetail(updated, cycle);
+            return updated;
+          });
+        }}>
+        {content}
       </SheetView>,
       document.querySelector(".app")!,
     )}

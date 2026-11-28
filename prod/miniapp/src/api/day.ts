@@ -12,18 +12,21 @@ import { notifyAttention } from "./attention";
 const DAY = "/vilar-contest/api/day";
 
 /** Задача из ответа дня — уже в том порядке, в каком её показывает Доска */
-export type DayTask = { id: string; title: string; /** почему задача стоит на этом месте — от сервера */ reason?: string; assignee?: string; due?: string; overdue: boolean; done: boolean };
+export type DayTask = { id: string; taskId?: string; title: string; /** почему задача стоит на этом месте — от сервера */ reason?: string; assignee?: string; due?: string; overdue: boolean; done: boolean };
 export type Day = {
   phase: string | null;
   /** учебное «сейчас» участника; null — сервер его не прислал, тогда дата настоящая */
   now: Date | null;
   tasks: DayTask[];
+  /** ответ исполнителя по поручению показа: текст и id поручения */
+  reply: { body: string; taskId: string } | null;
   /** можно ли промотать день: phase = approve */
   canAdvance: boolean;
   token: { generation: unknown; round: unknown; revision: unknown };
 };
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+const idOf = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) ? String(v) : str(v);
 const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 const date = (v: unknown): Date | null => {
   const s = str(v) ?? (typeof v === "number" ? v : undefined);
@@ -51,7 +54,8 @@ function taskOf(raw: unknown, i: number): DayTask | null {
   const person = obj(t.assignee) ?? obj(t.owner);
   const state = (str(t.column) ?? str(t.state) ?? str(t.status) ?? "").toLowerCase();
   return {
-    id: str(t.id) ?? str(t.step_id) ?? str(t.task_id) ?? `${i}:${title}`,
+    id: idOf(t.id) ?? idOf(t.step_id) ?? idOf(t.task_id) ?? `${i}:${title}`,
+    taskId: idOf(t.task_id) ?? idOf(t.id) ?? idOf(t.step_id),
     title, reason: str(t.reason),
     assignee: str(t.assignee_name) ?? str(person?.name) ?? str(t.assignee) ?? str(t.owner_name),
     due: str(t.due_date) ?? str(t.due) ?? str(t.deadline) ?? str(t.due_at),
@@ -75,11 +79,21 @@ function parse(body: unknown): Day | null {
   // поручение показа (Мария): состояние — в task.status; в очереди у его строки тот же id
   const own = taskOf(b.task, -1);
   if (own) {
-    const at = tasks.findIndex((t) => t.id === own.id || t.title === own.title);
-    if (at >= 0) tasks = tasks.map((t, i) => (i === at ? { ...own, ...t, reason: t.reason ?? own.reason, assignee: t.assignee ?? own.assignee, due: t.due ?? own.due, overdue: own.overdue || t.overdue, done: own.done } : t));
+    let at = tasks.findIndex(t => t.id === own.id || (own.taskId && t.taskId === own.taskId));
+    if (at < 0) {
+      const matches = tasks.filter(t => t.title === own.title && (!own.taskId || !t.taskId));
+      if (matches.length === 1) at = tasks.indexOf(matches[0]);
+    }
+    if (at >= 0) tasks = tasks.map((t, i) => (i === at ? { ...own, ...t, taskId: own.taskId ?? t.taskId, reason: t.reason ?? own.reason, assignee: t.assignee ?? own.assignee, due: t.due ?? own.due, overdue: own.overdue || t.overdue, done: own.done } : t));
     else if (own.done) tasks = [...tasks, own];   // сдано — сервер убрал строку из очереди, показываем её последней со статусом «сдано»
   }
-  return { phase, now: clockOf(b), tasks, canAdvance: phase === "approve", token: { generation: b.generation, round: b.round, revision: b.revision } };
+  const r = obj(b.reply);
+  const replyText = str(r?.body);
+  const replyId = idOf(r?.task_id);
+  const candidates = r?.task_id == null ? tasks.filter(t => t.done)
+    : tasks.filter(t => replyId !== undefined && (t.taskId === replyId || t.id === replyId));
+  const reply = replyText && candidates.length === 1 ? { body: replyText, taskId: candidates[0].id } : null;
+  return { phase, now: clockOf(b), tasks, reply, canAdvance: phase === "approve", token: { generation: b.generation, round: b.round, revision: b.revision } };
 }
 
 // Общее состояние: шапка Доски и вкладка «Поручения» читают один и тот же ответ

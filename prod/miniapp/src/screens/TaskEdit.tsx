@@ -7,7 +7,12 @@ const people = [
   { name: "Ольга Смирнова", short: "Ольга", initials: "ОС", hint: "ведёт договор с клиентом" },   // вариант Vilar
   { name: "Павел Егоров", short: "Павел", initials: "ПЕ" },
   { name: "Мария Лебедева", short: "Мария", initials: "МЛ" },
+  // «Другой» — остальные участники встречи: появляются по нажатию
+  { name: "Алексей Новиков", short: "Алексей", initials: "АН" },
+  { name: "Екатерина Соколова", short: "Екатерина", initials: "ЕС" },
+  { name: "Наталья Павлова", short: "Наталья", initials: "НП" },
 ];
+const SHORTLIST = 3;   // сколько людей видно сразу
 
 /** Название поручения: карандаш — сразу правка на месте (текст переносится по строкам), галочка — сохранить. */
 function EditableTitle({ text }: { text: string }) {
@@ -50,6 +55,7 @@ export function TaskEdit() {
   const [picking, setPicking] = useState(false);
   const nav = useNav();
   const [who, setWho] = useState(0);
+  const [all, setAll] = useState(false);   // «Другой» раскрывает остальных участников
   const p = people[who];
   return (
     <div className="screen">
@@ -75,9 +81,9 @@ export function TaskEdit() {
               </div>
               <span className="assignee__check"><Icon name="check" size={16} /></span>
             </div>
-            <div className="row" style={{ gap: 8 }}>
-              {people.map((x, i) => i !== who && <PersonChip key={x.name} name={x.short} initials={x.initials} onClick={() => setWho(i)} />)}
-              <PersonChip name="Другой" />
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              {people.map((x, i) => i !== who && (all || i < SHORTLIST) && <PersonChip key={x.name} name={x.short} initials={x.initials} onClick={() => setWho(i)} />)}
+              {!all && <PersonChip name="Другой" onClick={() => setAll(true)} />}
             </div>
           </Section>
 

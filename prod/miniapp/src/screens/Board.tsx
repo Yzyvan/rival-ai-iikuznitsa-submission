@@ -40,6 +40,7 @@ export function Board({ stage, onStage, initialMailTicket }: { stage: StageId; o
   const hero = glowFor(heroLoad);
   // учебный день показа: дата в шапке — с сервера; после утверждения протокола нажатие на неё проматывает 48 часов
   const day = useDay(hasAccountLaunch);
+  const [openedDay, openDay] = useState<string | null>(null);
   const [winding, setWinding] = useState(false);
   const [dayNote, setDayNote] = useState<string | null>(null);
   const wind = async () => {
@@ -165,7 +166,7 @@ export function Board({ stage, onStage, initialMailTicket }: { stage: StageId; o
               </div>
               <div className="hero__rows">
                 {isMail && <MailUrgent mail={mail} onOpen={openMail} />}
-                {liveApprovals && <DayUrgent day={day} />}
+                {liveApprovals && <DayUrgent day={day} onOpen={openDay} />}
                 {liveApprovals && <ApprovalUrgent approvals={approvals} onOpen={openApproval} />}
                 {isCalendar && <CalendarDecisions {...calendar} />}
                 {!isMail && !isCalendar && !liveApprovals && data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => nav(r.open ?? rowSheet(r))} />)}
@@ -175,7 +176,7 @@ export function Board({ stage, onStage, initialMailTicket }: { stage: StageId; o
         </div>
 
         <div key={stage} className="board-sheet stage-content">
-          {isMail ? <MailSections mail={mail} opened={openedMail} onOpen={openMail} /> : isCalendar ? <CalendarBoard {...calendar} /> : liveApprovals ? <><DayTasks day={day} /><LiveApprovals approvals={approvals} opened={openedApproval} onOpen={openApproval} /></> : data.sections.map((s) => (
+          {isMail ? <MailSections mail={mail} opened={openedMail} onOpen={openMail} /> : isCalendar ? <CalendarBoard {...calendar} /> : liveApprovals ? <><DayTasks day={day} opened={openedDay} onOpen={openDay} /><LiveApprovals approvals={approvals} opened={openedApproval} onOpen={openApproval} /></> : data.sections.map((s) => (
             <Section key={s.title} title={s.title} vilar={s.vilar}>
               {s.rows.map((r) => <ListRow key={r.title} urgent={r.urgent} title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => nav(r.open ?? rowSheet(r))} />)}
             </Section>

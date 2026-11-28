@@ -6,7 +6,8 @@ export function telegramWebApp() {
   return (window as Window & {Telegram?: {WebApp?: TelegramWebApp}}).Telegram?.WebApp;
 }
 
-export class TelegramLaunchError extends Error {}
+export class BoardAccessError extends Error {}
+export class TelegramLaunchError extends BoardAccessError {}
 
 const browserTestCode = (() => {
   const url = new URL(location.href);
@@ -71,10 +72,10 @@ export async function fetchBoardData(path: string, signal?: AbortSignal, body?: 
     signal,
   });
   if (response.status === 401) {
-    const body = await response.json();
+    const body = await response.json().catch(() => ({}));
     if (!launch) {
       const reason = body.error === "expired_launch" ? "Срок действия тестовой ссылки истёк." : "Тестовая ссылка недействительна.";
-      throw new Error(reason);
+      throw new BoardAccessError(reason);
     }
     const reason = body.error === "expired_launch" ? "Сеанс Telegram истёк." : "Telegram не подтвердил вход.";
     throw new TelegramLaunchError(reason + " Закройте Vilar и откройте его через меню бота @vilar_ai_bot.");

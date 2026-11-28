@@ -191,6 +191,14 @@ svg { display: block; flex: none; }
 /* сообщение Vilar в шторке */
 .vilar-msg { display: flex; align-items: flex-end; gap: var(--space-2); }
 .vilar-msg__bubble { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md) var(--radius-md) var(--radius-md) var(--space-1); background: var(--bg-sunken); }
+/* переписка в шторке: входящее — слева, ответ Vilar — справа */
+.vilar-msg--in, .vilar-msg--right { max-width: 88%; }
+.vilar-msg--right { flex-direction: row-reverse; align-self: flex-end; }
+.vilar-msg--right .vilar-msg__bubble { border-radius: var(--radius-md) var(--radius-md) var(--space-1) var(--radius-md); }
+.vilar-msg p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-original { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-original summary { cursor: pointer; }
+.chat { display: flex; flex-direction: column; gap: var(--space-3); }
 .draft-card__input { display: block; width: 100%; padding: 0; margin: 0; border: 0; outline: 0; resize: none; overflow: hidden; background: transparent; color: var(--text-primary); font: inherit; caret-color: var(--text-primary); }
 .title-input { display: block; min-width: 0; padding: 0; margin: 0; border: 0; outline: 0; resize: none; overflow: hidden; background: transparent; color: var(--text-primary); caret-color: var(--text-primary); }
 
