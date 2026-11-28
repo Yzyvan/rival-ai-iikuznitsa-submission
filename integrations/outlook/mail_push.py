@@ -132,7 +132,7 @@ def immutable_identity(provider, message, mid):
     identity = provider("messageIdentity", messageId=mid, select="id,changeKey,internetMessageId")
     stable = identity.get("id")
     if (not isinstance(stable, str) or not re.fullmatch(r"[A-Za-z0-9_+=/-]{1,1024}", stable)
-            or stable == mid or (identity.get("changeKey"), identity.get("internetMessageId"))
+            or (identity.get("changeKey"), identity.get("internetMessageId"))
             != (message["changeKey"], message["internetMessageId"])):
         raise ValueError("Outlook immutable identity could not be verified")
     return stable

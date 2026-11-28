@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock
 
 from mail_backfill import recover_inbox
-from mail_push import database, fetch_envelope, fetch_junk_envelope, initialize, process_one, queue_notifications
+from mail_push import database, fetch_envelope, fetch_junk_envelope, immutable_identity, initialize, process_one, queue_notifications
 from mail_subscription import manage, prepare
 
 
@@ -103,7 +103,7 @@ class MailPushContractTest(unittest.TestCase):
         self.assertEqual(reader.call_args_list[2].args, ("messageIdentity",))
         self.assertEqual(reader.call_args_list[2].kwargs["select"], "id,changeKey,internetMessageId")
 
-        for bad in (dict(id="regular-junk", changeKey="rev-junkemail", internetMessageId="<internet@example.test>"),
+        for bad in (dict(id="invalid#token", changeKey="rev-junkemail", internetMessageId="<internet@example.test>"),
                     dict(id="different", changeKey="moved-between-reads", internetMessageId="<internet@example.test>")):
             reader = provider("regular-junk", "junkemail")
             replies = list(reader.side_effect)
@@ -155,6 +155,12 @@ class MailPushContractTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT message_id FROM incoming").fetchone()[0], "moved-id")
         self.assertTrue(all(call.kwargs["mailFolderId"]=="junkemail" for call in provider.call_args_list))
         self.assertIn("lastModifiedDateTime ge", provider.call_args_list[1].kwargs["filter"])
+
+    def test_immutable_graph_response_can_match_the_default_token(self):
+        raw = {"id":"same-token", "changeKey":"revision", "internetMessageId":"<fixture@example.test>"}
+        self.assertEqual(immutable_identity(Mock(return_value=raw),raw,"same-token"),"same-token")
+        with self.assertRaises(ValueError):
+            immutable_identity(Mock(return_value={**raw,"changeKey":"other"}),raw,"same-token")
 
     def test_calendar_reference_verifies_mailbox_without_profile_read(self):
         base = "https://example.test/vilar/hooks/outlook-calendar"
