@@ -1,4 +1,4 @@
-"""Recover missed Inbox notifications into the existing durable receive queue."""
+"""Recover missed Outlook messages into the durable receive queue."""
 from datetime import datetime, timedelta, timezone
 import re
 
@@ -13,8 +13,10 @@ def graph_time(value):
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def recover_inbox(db, provider, *, initial_since, until):
+def recover_inbox(db, provider, *, initial_since, until, mail_folder="inbox"):
     """Use fixed time slices, advancing the checkpoint only with a complete queue write."""
+    if mail_folder not in {"inbox", "junkemail"}:
+        raise ValueError("Unsupported Outlook recovery folder")
     graph_time(initial_since)
     graph_time(until)
     db.execute("""CREATE TABLE IF NOT EXISTS inbox_recovery (
@@ -30,7 +32,7 @@ def recover_inbox(db, provider, *, initial_since, until):
         if not remaining:
             break
         start, end = remaining.pop()
-        result = provider("folderMessages", mailFolderId="inbox", top=LIMIT,
+        result = provider("folderMessages", mailFolderId=mail_folder, top=LIMIT,
                           filter=f"receivedDateTime ge {graph_time(start)} and receivedDateTime lt {graph_time(end)}",
                           select="id,receivedDateTime")
         rows = result["value"]

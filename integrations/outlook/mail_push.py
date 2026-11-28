@@ -154,6 +154,27 @@ def fetch_envelope(provider, account, mid):
         return {"source": source, "original_ref": mid, "data": message}
 
 
+def fetch_junk_envelope(provider, account, mid):
+    """Verify the Junk folder and persist identity and timing without reading message content."""
+    from import_message import required
+
+    original = provider("message", messageId=mid,
+                        select="id,changeKey,internetMessageId,receivedDateTime,isDraft")
+    if original.get("id") != mid or original.get("isDraft") is not False:
+        raise ValueError("Unexpected Junk message")
+    revision = required(original["changeKey"])
+    internet_id = required(original["internetMessageId"]).replace("'", "''")
+    matches = provider("folderMessages", mailFolderId="junkemail", top=2,
+                       filter=f"internetMessageId eq '{internet_id}'", select="id,changeKey")
+    rows = matches["value"]
+    if (matches.get("@odata.nextLink") or len(rows) != 1
+            or (rows[0]["id"], rows[0]["changeKey"]) != (mid, revision)):
+        raise ValueError("Junk revision could not be verified")
+    return {"source": dict(provider="mail", account=account, channel="junkemail", object=mid,
+                           revision=revision, change="create", occurred_at=required(original["receivedDateTime"])),
+            "data": {"outlook_junk_folder": True}}
+
+
 def process_one(db, fetch, core):
     row = db.execute("""SELECT * FROM incoming WHERE receipt IS NULL AND retry_at<=unixepoch()
                         ORDER BY queued_at, rowid LIMIT 1""").fetchone()
@@ -195,7 +216,12 @@ def main():
     parser.add_argument("--ttl-minutes", type=int, default=45)
     parser.add_argument("--recover-since", type=datetime.fromisoformat,
                         help="First allowed receivedDateTime checkpoint for Inbox recovery")
+    parser.add_argument("--folder", choices=["inbox", "junkemail"], default="inbox",
+                        help="Folder for polling and queue status")
     args = parser.parse_args()
+    if args.folder == "junkemail" and (args.command not in {"status", "work"}
+                                      or args.command == "work" and args.recover_since is None):
+        parser.error("Junk folder ingestion requires work with a recovery checkpoint")
     os.umask(0o077)
     anchor_path = os.getenv("VILAR_MAIL_CALENDAR_REFERENCE")
     anchor = Path(anchor_path) if anchor_path else None
@@ -207,7 +233,7 @@ def main():
         return
     directory = Path(os.environ["VILAR_MAIL_PUSH_DIR"])
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path = directory / "inbox.sqlite3"
+    path = directory / f"{args.folder}.sqlite3"
     subscription = directory / "subscription"
     with closing(database(path)) as db:
         initialize(db)
@@ -228,6 +254,7 @@ def main():
         if args.command == "work":
             core = SourceClient(os.environ["VILAR_API_URL"], os.environ["VILAR_SOURCE_TOKEN"])
             next_recovery = 0
+            fetch = fetch_envelope if args.folder == "inbox" else fetch_junk_envelope
             if args.recover_since is not None:
                 from mail_backfill import graph_time, recover_inbox
                 graph_time(args.recover_since)
@@ -236,10 +263,10 @@ def main():
                     next_recovery = time.monotonic() + 300
                     try:
                         recover_inbox(db, graph, initial_since=args.recover_since,
-                                      until=datetime.now(timezone.utc))
+                                      until=datetime.now(timezone.utc), mail_folder=args.folder)
                     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
-                        print("Inbox recovery deferred:", type(exc).__name__, file=sys.stderr, flush=True)
-                if not process_one(db, lambda mid: fetch_envelope(graph, account, mid), core):
+                        print(f"{args.folder} recovery deferred:", type(exc).__name__, file=sys.stderr, flush=True)
+                if not process_one(db, lambda mid: fetch(graph, account, mid), core):
                     time.sleep(0.5)
         else:
             # Serialize operator changes to this mailbox's recorded rule.

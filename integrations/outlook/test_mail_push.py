@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock
 
 from mail_backfill import recover_inbox
-from mail_push import database, initialize, process_one, queue_notifications
+from mail_push import database, fetch_junk_envelope, initialize, process_one, queue_notifications
 from mail_subscription import manage, prepare
 
 
@@ -67,6 +67,18 @@ class MailPushContractTest(unittest.TestCase):
                 self.assertEqual([r[0] for r in db.execute("SELECT message_id FROM incoming ORDER BY message_id")],
                                  ["first", "second"])
                 self.assertNotEqual(db.execute("SELECT recovered_until FROM inbox_recovery").fetchone()[0], before)
+
+    def test_junk_uses_verified_folder_and_never_requests_message_content(self):
+        message = dict(id="mid", changeKey="r1", internetMessageId="internet",
+                       receivedDateTime="2026-11-28T02:15:00Z", isDraft=False)
+        provider = Mock(side_effect=[message, {"value": [{"id": "mid", "changeKey": "r1"}]}])
+        event = fetch_junk_envelope(provider, "owner@example.test", "mid")
+        self.assertEqual(event["source"]["channel"], "junkemail")
+        self.assertEqual(event["data"], {"outlook_junk_folder": True})
+        fields = provider.call_args_list[0].kwargs["select"].split(",")
+        self.assertNotIn("body", fields)
+        self.assertNotIn("subject", fields)
+        self.assertEqual(provider.call_args_list[1].kwargs["mailFolderId"], "junkemail")
 
     def test_calendar_reference_verifies_mailbox_without_profile_read(self):
         base = "https://example.test/vilar/hooks/outlook-calendar"
