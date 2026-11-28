@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { NavContext, takePending } from "./nav";
+import { NavContext, onReport, takePending } from "./nav";
 import { watchForUpdates } from "./update";
 import { defaultStage, glow, toasts, type StageId } from "./data/content";
-import { TabBar, UndoToast, type TabId } from "./ui";
+import { TabBar, Toast, UndoToast, type TabId } from "./ui";
 import { Preloader } from "./screens/Preloader";
 import { Onboarding, needOnboarding } from "./screens/Onboarding";
 import { Board } from "./screens/Board";
 import { hasAccountLaunch } from "./api/mailBoard";
+import { completeMicrosoftLogin } from "./api/connections";
 import { Tasks } from "./screens/Tasks";
 import { Tasks as TrackerTasks, TaskBindingsProvider } from "../../../integrations/tracker/src";
 import { trackerBindings } from "../../../integrations/tracker/transport/bindings";
-import "../../../integrations/tracker/src/style.css";
 const showTracker = new URLSearchParams(window.location.search).get("tracker") === "1";
+if (showTracker) void import("../../../integrations/tracker/src/style.css");
 const standBindings = { ...trackerBindings, priorities: undefined };
 import { Stats } from "./screens/Stats";
 import { SheetView } from "./screens/SheetView";
@@ -50,7 +51,8 @@ export function App() {
     setStage(next);
     if (hasAccountLaunch) {
       const url = new URL(window.location.href);
-      url.searchParams.set("open", "board:" + next);
+      // выбранный этап запоминаем отдельным параметром: «open» — это ссылка из бота, она открывает мини-апп без прелоудера
+      url.searchParams.set("stage", next);
       window.history.replaceState(window.history.state, "", url);
     }
   }, []);
@@ -80,6 +82,10 @@ export function App() {
   const [pick, setPick] = useState<{ toast: string; about?: string } | null>(null);
   const sheetRef = useRef<string | null>(null);
   sheetRef.current = sheet;
+  // ошибка действия, которое ушло после закрытия шторки, — коротким тостом поверх любого экрана
+  const [note, setNote] = useState<{ text: string; key: number } | null>(null);
+  useEffect(() => onReport((text) => setNote({ text, key: Date.now() })), []);
+  useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(null), 2400); return () => clearTimeout(t); }, [note]);
 
   useEffect(() => {
     const tg = (window as any).Telegram?.WebApp;
@@ -97,7 +103,8 @@ export function App() {
   const nav = useCallback((target: string) => {
     // «back», «home» — без двоеточия; у шторок id сам может содержать «:» (авто-шторки задач)
     const cut = target.indexOf(":"), kind = cut < 0 ? target : target.slice(0, cut), id = cut < 0 ? "" : target.slice(cut + 1);
-    if (kind === "sheet" && (!hasAccountLaunch || id === "help" || (tab === "tasks" && !showTracker))) setSheet(id);
+    // в живом режиме макетные шторки не открываются: остаются справка, «Новая задача» и «Фильтр»
+    if (kind === "sheet" && (!hasAccountLaunch || id === "help" || id === "newtask" || id === "filter")) setSheet(id);
     else if (kind === "pick") { setPick({ toast: id, about: sheetRef.current ? sheets[sheetRef.current]?.title : undefined }); setSheet(null); }
     else if (kind === "toast") { setSheet(null); setToast({ id, key: Date.now() }); }
     else if (kind === "screen") { setSheet(null); setStack((s) => [...s, { id, origin: REVEAL.has(id) ? { ...tap.current } : undefined, from: REVEAL.has(id) ? tapped.current ?? undefined : undefined }]); }
@@ -111,8 +118,10 @@ export function App() {
     else if (kind === "board") { setSheet(null); setStack([]); setTab("board"); selectStage(id as StageId); }
     else if (kind === "tab") { setSheet(null); setStack([]); setTab(id as TabId); }
     else setSheet(null);
-  }, [selectStage, tab]);
+  }, [selectStage]);
 
+  // вернулись из Microsoft по ссылке возврата — завершаем вход сразу, не дожидаясь, пока человек откроет профиль
+  useEffect(() => { if (hasAccountLaunch) void completeMicrosoftLogin(); }, []);
   const done = useCallback(() => setLoading(false), []);
   // фон Telegram: пока идёт прелоудер — в цвет градиента (без чёрной вспышки), потом — чёрный, как у приложения
   useEffect(() => {
@@ -128,9 +137,7 @@ export function App() {
       <div className="app">
         {/* раздел меню рисуется всегда — вложенный экран ложится сверху (и может раскрыться кругом из кнопки) */}
         {tab === "board" && <Board stage={stage} onStage={selectStage} initialMailTicket={deep.mailTicket} />}
-        {tab === "tasks" && (showTracker
-          ? <TaskBindingsProvider bindings={standBindings}><TrackerTasks /></TaskBindingsProvider>
-          : <Tasks />)}
+        {tab === "tasks" && (showTracker ? <TaskBindingsProvider bindings={standBindings}><TrackerTasks /></TaskBindingsProvider> : <Tasks />)}
         {tab === "stats" && <Stats />}
         <TabBar active={tab} onChange={changeTab} />
         {top && nested[top.id] && (
@@ -153,6 +160,7 @@ export function App() {
         {sheet && sheet !== "newtask" && sheet !== "filter" && <SheetView key={sheet} sheet={sheets[sheet]} onAction={nav} />}
         {/* любое действие пользователя можно отменить: все тосты — с отсчётом */}
         {toast && toasts[toast.id] && <UndoToast key={toast.key} text={toast.text ?? toasts[toast.id].text} onCommit={() => { takePending()?.(); setToast(null); }} onCancel={() => { takePending(); setToast(null); }} />}
+        {note && <Toast key={note.key} type="Error" text={note.text} />}
         {onboard && <Onboarding active={!loading} onDone={() => setOnboard(false)} />}
         {loading && <Preloader onDone={done} toBoard={!onboard} />}
       </div>

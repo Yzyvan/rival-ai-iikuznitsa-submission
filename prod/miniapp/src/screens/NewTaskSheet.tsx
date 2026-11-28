@@ -1,6 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Avatar, Button, Icon, IconButton, Tag, Toggle, VilarHint, type IconName } from "../ui";
-import { onToastCommit } from "../nav";
+import { onToastCommit, report } from "../nav";
+import { hasAccountLaunch } from "../api/mailBoard";
+import { isoDay, newKey, trackerPost, useTaskRead, type ColumnCode, type People } from "../api/tracker";
 import { useSwipeDown } from "../ui/useSwipeDown";
 import { tick, whoop } from "../haptics";
 
@@ -55,7 +57,7 @@ const MONTHS = ["января", "февраля", "марта", "апреля", 
 const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 const MONTHS_TITLE = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
-const TODAY = new Date(2026, 11, 7);
+const TODAY = hasAccountLaunch ? new Date(new Date().setHours(0, 0, 0, 0)) : new Date(2026, 11, 7);
 const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 const dayLabel = (d: Date) => (same(d, TODAY) ? "Сегодня" : same(d, addDays(TODAY, 1)) ? "Завтра" : `${WD[d.getDay()][0].toUpperCase()}${WD[d.getDay()][1]}, ${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`);
@@ -80,11 +82,16 @@ export function FloatField({ label, value, onChange, autoFocus, onDone, classNam
   );
 }
 
-/** Колонка канбана, куда добавится задача (её «Добавить» нажали) */
-let targetColumn = 2;
-export const openNewTask = (column: number) => { targetColumn = column; };
+/** Колонка канбана, куда добавится задача (её «Добавить» нажали); без колонки — в «Новые» */
+let targetColumn: ColumnCode = "new";
+export const openNewTask = (column: ColumnCode = "new") => { targetColumn = column; };
 
 export function NewTaskSheet({ onClose, onToast }: { onClose: () => void; onToast: (id: string) => void }) {
+  // После входа люди — из трекера, и шторка сама ставит задачу в трекер: её можно открыть с любого экрана, не только с канбана
+  const team = useTaskRead<People>(hasAccountLaunch ? "people" : null);
+  const livePeople = useMemo<Person[] | null>(() => (hasAccountLaunch ? (team.data?.rows ?? []).map((p) => ({ name: p.name, tags: [] })) : null), [team.data]);
+  // один ключ повтора на одну форму: повтор того же запроса не создаст вторую задачу
+  const idempotency = useRef(newKey());
   const [closing, setClosing] = useState(false);
   const [kind, setKind] = useState<Kind | null>(null);
   const [project, setProject] = useState<number | null>(null);
@@ -133,15 +140,15 @@ export function NewTaskSheet({ onClose, onToast }: { onClose: () => void; onToas
     whoop(); setKind(k); setQuery(null); setPicker(false);
     setProject(null); setPeople([]); setSlot(null); setDuration(null); setDay(null); setTime(null);
   };
-  const pickProject = (i: number) => { tick(); setProject(i); setPeople([PROJECTS[i].lead]); };
+  const pickProject = (i: number) => { tick(); setProject(i); setPeople(livePeople && !livePeople.some((p) => p.name === PROJECTS[i].lead) ? [] : [PROJECTS[i].lead]); };
 
   // подсказки людей: совпадение с началом имени или фамилии; ведущий проекта — первым
   const suggestions = useMemo(() => {
     if (query === null) return [];
     const q = query.trim().toLowerCase();
-    const list = PEOPLE.filter((p) => !people.includes(p.name) && (!q || p.name.toLowerCase().split(" ").some((w) => w.startsWith(q))));
+    const list = (livePeople ?? PEOPLE).filter((p) => !people.includes(p.name) && (!q || p.name.toLowerCase().split(" ").some((w) => w.startsWith(q))));
     return list.sort((a, b) => Number(b.name === lead) - Number(a.name === lead)).slice(0, 4);
-  }, [query, people, lead]);
+  }, [query, people, lead, livePeople]);
   const choose = (name: string) => { tick(); setPeople((p) => (multi ? [...p, name] : [name])); setQuery(null); };
 
   // шаги: что уже заполнено и что показывать дальше
@@ -165,7 +172,19 @@ export function NewTaskSheet({ onClose, onToast }: { onClose: () => void; onToas
     const t = title.trim();
     if ((kind === "project" || kind === "assign") && day) {
       const due = `до ${day.getDate()} ${MONTHS_SHORT[day.getMonth()]}`;
-      onToastCommit(() => window.dispatchEvent(new CustomEvent("vilar:task", { detail: { column: targetColumn, task: { date: due, title: t, assignee: people[0], ...(kind === "project" && project !== null ? { project: PROJECTS[project].name } : {}) } } })));
+      const projectName = kind === "project" && project !== null ? PROJECTS[project].name : null;
+      if (hasAccountLaunch) {
+        // POST /tracker/api/tasks с Idempotency-Key; «Просроченные» трекер считает сам — оттуда задача встаёт в «Новые»
+        const person = team.data?.rows.find((p) => p.name === people[0]);
+        const column = targetColumn === "overdue" ? "new" : targetColumn, key = idempotency.current;
+        onToastCommit(() => {
+          if (!person) return report("Исполнителя нет в трекере.");
+          trackerPost("tasks", {
+            title: t, kind, column, assignee_person_id: person.id, project: projectName, due_date: isoDay(day), due_time: time ?? null,
+            participant_ids: [], duration_minutes: null, video_call: false, reminder: false,
+          }, key).catch((e: Error) => report(e.message));
+        });
+      } else onToastCommit(() => window.dispatchEvent(new CustomEvent("vilar:task", { detail: { column: targetColumn, kind, day, time, task: { date: due, title: t, assignee: people[0], ...(projectName ? { project: projectName } : {}) } } })));
     }
     close(() => onToast(kind === "meeting" ? "t14" : kind === "self" ? "t15" : kind === "assign" ? "t16" : "t13"));
   };
@@ -322,7 +341,7 @@ export function NewTaskSheet({ onClose, onToast }: { onClose: () => void; onToas
               </div>
               <VilarHint text="Свободно у всех участников — занятые окна не показываю" />
             </>
-          ), <img src="./assets/logos/google-calendar.svg" width={16} height={16} alt="" />)}
+          ), <img src="./assets/logos/outlook-calendar.svg" width={16} height={16} alt="" />)}
           {showDuration && section("duration", "Длительность", (
             <div className="nt-chips">
               {["15 мин", "30 мин", "45 мин", "1 час"].map((d) => <button key={d} type="button" className={`nt-chip t-body-m-medium${d === duration ? " is-on" : ""}`} onClick={() => { tick(); setDuration(d); }}>{d}</button>)}

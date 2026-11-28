@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { canEdit } from "../api/mailBoard";
 import { frontAction, frontMailById, FrontError, type MailTicket } from "../api/front";
 import type { SheetData } from "../data/sheets";
 import { Button, DraftCard, Icon } from "../ui";
@@ -11,12 +12,12 @@ const actions = Object.keys(labels) as Action[];
 export const isPreview = (ticket: MailTicket) =>
   ticket.state === "accepted" || ticket.state === "confirming" || ticket.state === "queued" || ticket.state === "approved_preview" || ticket.state === "cancelled_preview" || actions.some(action => ticket.actions.includes(action));
 
-export function PreviewSheet({ ticket, sheet, onUpdate, onClose }: {
-  ticket: MailTicket; sheet: SheetData; onUpdate: (value: MailTicket) => void; onClose: () => void;
+export function PreviewSheet({ ticket, sheet, onUpdate, onClose, children, denied }: {
+  children: ReactNode; denied: boolean; ticket: MailTicket; sheet: SheetData; onUpdate: (value: MailTicket) => void; onClose: () => void;
 }) {
   const [edit, setEdit] = useState<{ version: number; text: string } | null>(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get("edit") === "1" && params.get("open") === "mail:" + ticket.id && ticket.actions.includes("edit_preview")
+    return canEdit && params.get("edit") === "1" && params.get("open") === "mail:" + ticket.id && ticket.actions.includes("edit_preview")
       ? { version: ticket.version, text: ticket.draft ?? "" } : null;
   });
 
@@ -32,7 +33,7 @@ export function PreviewSheet({ ticket, sheet, onUpdate, onClose }: {
   const locked = useRef(false);
   const stale = edit !== null && edit.version !== ticket.version;
   const save = async (action: Action) => {
-    if (locked.current || !ticket.actions.includes(action) || (action === "edit_preview" && (!edit || stale || !edit.text.trim()))) return;
+    if (!canEdit || denied || locked.current || !ticket.actions.includes(action) || (action === "edit_preview" && (!edit || stale || !edit.text.trim()))) return;
     locked.current = true;
     setBusy(true);
     setError("");
@@ -50,7 +51,7 @@ export function PreviewSheet({ ticket, sheet, onUpdate, onClose }: {
     }
   };
   const begin = () => { setEdit({ version: ticket.version, text: ticket.draft ?? "" }); setError(""); };
-  if (edit) return <section className="preview-editor" role="dialog" aria-modal="true" aria-labelledby="preview-editor-title">
+  if (edit && canEdit && !denied) return <section className="preview-editor" role="dialog" aria-modal="true" aria-labelledby="preview-editor-title">
     <header><h2 id="preview-editor-title" className="t-title-m">Редактировать черновик</h2></header>
     <textarea aria-label="Текст черновика" className="preview-editor__input t-body-l" autoFocus value={edit.text}
       disabled={busy} onChange={e => setEdit({ ...edit, text: e.target.value })} />
@@ -63,11 +64,11 @@ export function PreviewSheet({ ticket, sheet, onUpdate, onClose }: {
   </section>;
   return <>
     <SheetView sheet={{ ...sheet, draft: undefined, msg: undefined, actions: [] }} onAction={onClose}>
-      {sheet.msg && <p className="t-body-l">{sheet.msg}</p>}
-      <DraftCard key={ticket.version} caption="Черновик ответа" text={ticket.draft ?? ""} readOnly />
+      {children}
+      {!denied && <DraftCard key={ticket.version} caption="Черновик ответа" text={ticket.draft ?? ""} readOnly />}
       {error && <p role="alert" className="t-body-m">{error}</p>}
       <div className="sheet__actions" aria-busy={busy}>
-        {actions.filter(a => a !== "cancel_confirmation" && ticket.actions.includes(a)).map(a =>
+        {canEdit && !denied && actions.filter(a => a !== "cancel_confirmation" && ticket.actions.includes(a)).map(a =>
           <Button key={a} label={labels[a]} variant={a === "start_confirmation" || a === "approve_preview" || a === "reopen_preview" ? "primary" : "secondary"} fill disabled={busy}
             onClick={() => {
               if (a === "edit_preview") begin();
@@ -77,7 +78,7 @@ export function PreviewSheet({ ticket, sheet, onUpdate, onClose }: {
       </div>
     </SheetView>
     {ticket.state === "confirming" && ticket.confirmation_deadline &&
-      <Confirmation deadline={ticket.confirmation_deadline} canCancel={ticket.actions.includes("cancel_confirmation") && !busy}
+      <Confirmation deadline={ticket.confirmation_deadline} canCancel={canEdit && !denied && ticket.actions.includes("cancel_confirmation") && !busy}
         cancel={() => void save("cancel_confirmation")} />}
   </>;
 }

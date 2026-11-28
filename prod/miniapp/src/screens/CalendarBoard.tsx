@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchBoardData, canEdit } from "../api/mailBoard";
-import { Button, ListRow, Section } from "../ui";
+import { notifyAttention } from "../api/attention";
+import { isoDay } from "../api/tracker";
+import { Button, DraftCard, ListRow, Section, Toast } from "../ui";
 import { BoardDocument } from "./BoardDocument";
 import { MeetingProtocol } from "./Protocol";
 import { SheetView } from "./SheetView";
+import { PickDateSheet } from "./PickDateSheet";
+import { FloatField } from "./NewTaskSheet";
 
 type Choice = "delegate" | "personal";
 type Meeting = { id: string; card_key?: string; can_reschedule?: boolean; title: string; start: string; end: string; all_day: boolean; needs_decision: boolean; choice: Choice | null };
@@ -60,8 +64,21 @@ export function useCalendar(active: boolean) {
     setMeetings(current => current?.map(m => m.id === selected.id
       ? {...m, needs_decision: false, choice: action} : m) ?? null);
     reload(v => v + 1);
+    notifyAttention();
   };
-  const reschedule = async (id: string, start: string, end: string, syncing: () => void) => {
+  /** Перенос: POST ./api/calendar/board { id, start, end }. Длительность встречи сохраняется; время — московское */
+  const reschedule = async (m: Meeting, date: Date, time: string) => {
+    const start = new Date(`${isoDay(date)}T${time}:00+03:00`);
+    const end = new Date(+start + Math.max(15 * 60000, +new Date(m.end) - +new Date(m.start)));
+    const res = await fetchBoardData("./api/calendar/board", undefined, { id: m.id, start: start.toISOString(), end: end.toISOString() });
+    if (res.status === 403) throw new Error("Для переноса откройте Vilar из Telegram владельца календаря.");
+    if (res.status === 409) { reload(v => v + 1); throw new Error("Встреча изменилась. Проверьте обновлённое расписание."); }
+    if (!res.ok) throw new Error("Не удалось перенести встречу. Попробуйте ещё раз.");
+    setMeetings(current => current?.map(x => x.id === m.id ? {...x, start: start.toISOString(), end: end.toISOString()} : x) ?? null);
+    reload(v => v + 1);
+    notifyAttention();
+  };
+  const rescheduleOutlook = async (id: string, start: string, end: string, syncing: () => void) => {
     const res = await fetchBoardData("./api/calendar/board", undefined, { id, start, end });
     if (res.status === 409) {
       reload(v => v + 1);
@@ -91,8 +108,75 @@ export function useCalendar(active: boolean) {
     setMeetings(current => current?.map(m => cardKey(m) === updated.card_key ? updated : m) ?? null);
     reload(v => v + 1);
   };
-  return { meetings, error, pending, select, selected, decide, reschedule };
+  return { meetings, error, pending, select, selected, decide, reschedule, rescheduleOutlook };
+}
 
+/* ── Карточка встречи: GET ./api/calendar/detail?id=… — тема, время, участники и прошлая встреча, если она была ── */
+type Person = string | { name?: string | null; email?: string | null };
+type PreviousMeeting = { id?: string; title?: string | null; subject?: string | null; start?: string | null; summary?: string | null };
+/** Ядро отдаёт attendees и previous_meeting, макетный сервер — participants и previous; принимаем оба */
+type MeetingDetail = {
+  participants?: Person[] | null;
+  attendees?: Person[] | null;
+  previous?: PreviousMeeting | null;
+  previous_meeting?: PreviousMeeting | null;
+};
+const nameOf = (p: Person) => (typeof p === "string" ? p : p?.name || p?.email || "");
+
+function useMeetingDetail(id: string) {
+  const [detail, setDetail] = useState<MeetingDetail | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchBoardData("./api/calendar/detail?" + new URLSearchParams({ id }), controller.signal)
+      .then(async (res) => { if (res.ok) { const body = await res.json(); if (!controller.signal.aborted) setDetail(body?.meeting ?? body); } })
+      .catch(() => { /* без подробностей карточка остаётся как в списке */ });
+    return () => controller.abort();
+  }, [id]);
+  return detail;
+}
+
+/** Участники, прошлая встреча и уточнение участникам. Уточнение — учебный черновик: POST ./api/calendar/clarification { id, question } → черновик и адресаты */
+function MeetingDetails({ meeting, canAsk }: { meeting: Meeting; canAsk: boolean }) {
+  const detail = useMeetingDetail(meeting.id);
+  const people = (detail?.participants ?? detail?.attendees ?? []).map(nameOf).filter(Boolean);
+  const prev = detail?.previous ?? detail?.previous_meeting;
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<{ draft: string; recipients: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const ask = async () => {
+    if (busy || !question.trim()) return;
+    setBusy(true); setError("");
+    try {
+      const res = await fetchBoardData("./api/calendar/clarification", undefined, { id: meeting.id, question: question.trim() });
+      if (!res.ok) throw new Error(res.status === 403 ? "Уточнение готовит владелец календаря из Telegram." : "Не удалось подготовить уточнение.");
+      const body = await res.json();
+      setAnswer({ draft: String(body?.draft ?? body?.text ?? ""), recipients: (Array.isArray(body?.recipients) ? body.recipients : []).map(nameOf).filter(Boolean) });
+    } catch (e) { setError(e instanceof Error ? e.message : "Не удалось подготовить уточнение."); }
+    finally { setBusy(false); }
+  };
+  return <>
+    {people.length > 0 && <div className="nt-section">
+      <span className="t-overline c-tertiary">Участники</span>
+      <p className="t-body-m">{people.join(", ")}</p>
+    </div>}
+    {prev && <div className="nt-section">
+      <span className="t-overline c-tertiary">Прошлая встреча</span>
+      <p className="t-body-m">{[prev.title ?? prev.subject, prev.start ? day.format(new Date(prev.start)) : null].filter(Boolean).join(" · ")}</p>
+      {prev.summary && <p className="t-body-m c-secondary" style={{ whiteSpace: "pre-wrap" }}>{prev.summary}</p>}
+    </div>}
+    {canAsk && <div className="nt-section">
+      <span className="t-overline c-tertiary">Уточнение участникам</span>
+      {answer ? <>
+        <DraftCard caption="Черновик уточнения" text={answer.draft} readOnly empty="Черновик пуст." />
+        {answer.recipients.length > 0 && <p className="t-body-m c-secondary">Кому: {answer.recipients.join(", ")}</p>}
+      </> : <>
+        <FloatField label="Что уточнить" value={question} onChange={setQuestion} />
+        <Button label={busy ? "Готовлю…" : "Подготовить уточнение"} variant="secondary" size="s" fill onClick={() => void ask()} />
+      </>}
+      {error && <p role="alert" className="t-body-m c-secondary">{error}</p>}
+    </div>}
+  </>;
 }
 
 const day = new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", day: "numeric", month: "long" });
@@ -116,7 +200,7 @@ type Calendar = ReturnType<typeof useCalendar>;
 
 export function CalendarDecisions({ pending, select }: Calendar) {
   return <>{pending.map(m => <ListRow key={cardKey(m)} urgent title={m.title} subtitle={schedule(m)}
-    status={["кто пойдёт?", "Решение", "Яркая"]} onClick={() => select(cardKey(m))} />)}</>;
+    status={["кто пойдёт?", "Решение", "Яркая"]} onClick={() => select(m.id)} />)}</>;
 }
 
 function meetingInput(value: string) {
@@ -183,13 +267,19 @@ function RescheduleMeeting({ meeting, save }: {
   </form>;
 }
 
-export function CalendarBoard({ meetings, error, selected, select, decide, reschedule }: Calendar) {
+export function CalendarBoard({ meetings, error, selected, select, decide, reschedule, rescheduleOutlook }: Calendar) {
   const [protocolId, setProtocolId] = useState<string | null>(null);
+  const [moving, setMoving] = useState<Meeting | null>(null);   // «Перенести» — какую встречу
+  const [note, setNote] = useState<{ text: string; key: number; ok?: boolean } | null>(null);
+  useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(null), 2400); return () => clearTimeout(t); }, [note]);
   if (error || !meetings?.length) return <Section title="Календарь Outlook">
     <p role="status" className="t-body-m c-secondary">{error || (meetings ? "Встреч пока нет." : "Загрузка…")}</p></Section>;
   const now = Date.now();
   const minutes = selected ? Math.ceil((+new Date(selected.start) - now) / 60000) : 0;
   const when = minutes <= 0 ? "встреча идёт" : minutes <= 60 ? `через ${minutes} мин` : day.format(new Date(selected!.start));
+  // переносить и уточнять можно встречу, которая ещё не закончилась
+  const open = !!selected && canEdit && !selected.all_day && +new Date(selected.end) > now;
+  const move: [string, "secondary", string][] = open && !selected.card_key ? [["Перенести", "secondary", "reschedule"]] : [];
   return <>
     {["Предстоящие", "Сейчас", "Прошедшие"].map((section, i) => {
       const rows = meetings.filter(m => !needsChoice(m) && (+new Date(m.end) <= now ? 2 : +new Date(m.start) > now ? 0 : 1) === i);
@@ -197,7 +287,7 @@ export function CalendarBoard({ meetings, error, selected, select, decide, resch
       return rows.length > 0 && <Section key={section} title={section}>{rows.map(m => (
         <ListRow key={cardKey(m)} title={m.title} subtitle={schedule(m)}
           status={m.choice ? [m.choice === "delegate" ? "идёт Vilar" : "лично", "Нейтрально", "Темная"] : undefined}
-          onClick={() => select(cardKey(m))} />
+          onClick={() => select(m.id)} />
       ))}</Section>;
     })}
     {selected && createPortal(
@@ -206,16 +296,30 @@ export function CalendarBoard({ meetings, error, selected, select, decide, resch
         : <SheetView key={cardKey(selected)} sheet={{
         title: selected.title,
         tags: [...schedule(selected).split(" · "), "Outlook"],
-        status: needsChoice(selected) ? [when, "Внимание", "Яркая"] : undefined,
-        msg: needsChoice(selected) ? "В приглашении есть ссылка на Телемост. Я могу пойти на встречу вместо вас. Кто пойдёт?" : undefined,
-        actions: needsChoice(selected) && canEdit ? [["Поручить Vilar", "primary", "delegate"], ["Иду сам", "secondary", "personal"]]
-          : [["Закрыть", "ghost", "close"]],
-      }} onDecision={decide} onAction={() => select(null)}>
-        {selected.can_reschedule && canEdit && <RescheduleMeeting key={selected.id} meeting={selected} save={reschedule} />}
-        <BoardDocument kind="protocol" id={selected.id} />
-        <button className="btn btn--secondary" onClick={() => setProtocolId(selected.id)}>Открыть протокол</button>
+        // ждёт решения — «через N мин» и вопрос; решение уже есть — кто идёт, и до начала встречи его можно поменять
+        status: needsChoice(selected) ? [when, "Внимание", "Яркая"] : selected.choice ? [selected.choice === "delegate" ? "идёт Vilar" : "лично", "Нейтрально", "Темная"] : undefined,
+        msg: needsChoice(selected) ? "В приглашении есть ссылка на Телемост. Я могу пойти на встречу вместо вас. Кто пойдёт?"
+          : !selected.choice || +new Date(selected.start) <= now ? undefined
+          : selected.choice === "delegate" ? "На эту встречу иду я вместо вас. Представлюсь ИИ-помощником, вопросы вне моих полномочий передам вам." : "На эту встречу вы идёте сами.",
+        actions: needsChoice(selected) && canEdit ? [["Поручить Vilar", "primary", "delegate"], ["Иду сам", "secondary", "personal"], ...move]
+          : selected.choice && +new Date(selected.start) > now && canEdit ? [[selected.choice === "delegate" ? "Пойду сам" : "Поручить Vilar", "secondary", selected.choice === "delegate" ? "personal" : "delegate"], ...move, ["Закрыть", "ghost", "close"]]
+          : [...move, ["Закрыть", "ghost", "close"]],
+      }} onDecision={decide} onAction={(to) => { if (to === "reschedule") setMoving(selected); select(null); }}>
+        {open && selected.can_reschedule && <RescheduleMeeting key={selected.id} meeting={selected} save={rescheduleOutlook} />}
+        <MeetingDetails meeting={selected} canAsk={open} />
+        {/* протокол — только у встречи, которая уже началась: до неё показывать нечего */}
+        {(selected.card_key || +new Date(selected.start) <= now) && <>
+          <BoardDocument kind="protocol" id={selected.id} />
+          <Button label="Открыть протокол" variant="secondary" fill onClick={() => setProtocolId(selected.id)} />
+        </>}
       </SheetView>,
       document.querySelector(".app")!,
     )}
+    {moving && createPortal(
+      <PickDateSheet title="Перенести встречу" subtitle={moving.title} onClose={() => setMoving(null)}
+        onPick={(date, time) => { const m = moving; setMoving(null); reschedule(m, date, time).then(() => setNote({ text: "Встреча перенесена", key: Date.now(), ok: true }), (e: Error) => setNote({ text: e.message, key: Date.now() })); }} />,
+      document.querySelector(".app")!,
+    )}
+    {note && <Toast key={note.key} type={note.ok ? "Success" : "Error"} text={note.text} />}
   </>;
 }

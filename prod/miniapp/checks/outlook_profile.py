@@ -52,6 +52,8 @@ class OutlookProfile(unittest.TestCase):
 
         page.route("**/*", respond)
         page.goto(origin + "/?screen=profile")
+        manage = page.get_by_role("button", name="Настройки Microsoft")
+        manage.click()
         mail = page.locator(".onb-card").filter(has_text="Почта Outlook")
         calendar = page.locator(".onb-card").filter(has_text="Календарь Outlook")
         expect(mail).to_contain_text("Подключено")
@@ -67,6 +69,7 @@ class OutlookProfile(unittest.TestCase):
         expect(mail).to_contain_text("Требуется вход")
         expect(calendar).to_contain_text("Требуется вход")
         page.reload()
+        manage.click()
         expect(mail).to_contain_text("Требуется вход")
         expect(page.get_by_role("button", name="Войти в Microsoft")).to_be_visible()
         writes = [(method, path) for method, path, _ in calls if method != "GET"]

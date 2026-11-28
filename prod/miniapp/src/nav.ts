@@ -10,3 +10,12 @@ export const useNav = () => useContext(NavContext);
 let pending: (() => void) | null = null;
 export const onToastCommit = (fn: () => void) => { pending = fn; };
 export const takePending = () => { const fn = pending; pending = null; return fn; };
+
+// Короткое сообщение об ошибке поверх любого экрана (например, трекер не принял новую задачу, когда шторка уже закрыта)
+const NOTE = "vilar:note";
+export const report = (text: string) => { window.dispatchEvent(new CustomEvent(NOTE, { detail: text })); };
+export const onReport = (fn: (text: string) => void) => {
+  const listener = (e: Event) => fn((e as CustomEvent<string>).detail);
+  window.addEventListener(NOTE, listener);
+  return () => window.removeEventListener(NOTE, listener);
+};

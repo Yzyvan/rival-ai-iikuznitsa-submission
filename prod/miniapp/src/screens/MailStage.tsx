@@ -2,12 +2,14 @@
 // Какое поле в какой слот идёт — см. rowOf и sheetOf. Тег без значения не показывается, на его место ничего не встаёт.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { hasAccountLaunch, fetchImportedMail, type ImportedMail } from "../api/mailBoard";
+import { canEdit, hasAccountLaunch, fetchImportedMail, type ImportedMail } from "../api/mailBoard";
 import { dayParam, frontAction, frontList, frontMailById, FrontError, isToday, NEEDS_REFRESH, whenLabel, type MailAction, type MailTicket } from "../api/front";
 import { demoMail, DEMO_NOW } from "../data/mailTickets";
 import type { SheetData } from "../data/sheets";
 import { ListRow, Section, Toast, type StatusSpec } from "../ui";
 import { onToastCommit, useNav } from "../nav";
+import { BoardDocument, MailContent, handledByVilar, hasSentReply } from "./BoardDocument";
+import { notifyAttention } from "../api/attention";
 import { PreviewSheet, isPreview } from "./PreviewSheet";
 import { QuarantineSheet, isQuarantine } from "./QuarantineSheet";
 import { MailBoard } from "./MailBoard";
@@ -30,7 +32,13 @@ async function load() {
   request?.abort();
   const controller = (request = new AbortController());
   try {
-    const { items } = await frontList<MailTicket>("mail", { day: dayParam(new Date()) }, controller.signal);
+    const query = { day: dayParam(new Date()) };
+    let page = await frontList<MailTicket>("mail", query, controller.signal);
+    const items = [...page.items];
+    for (let n = 1; page.next_cursor && n < 20; n++) {
+      page = await frontList<MailTicket>("mail", { ...query, cursor: page.next_cursor }, controller.signal);
+      items.push(...page.items);
+    }
     set({ mode: "front", tickets: items, legacy: null, error: null });
   } catch (e) {
     if (controller.signal.aborted) return;
@@ -60,6 +68,7 @@ async function act(t: MailTicket, action: MailAction, payload: object = {}): Pro
   if (store.mode === "demo") next = { ...t, ...DEMO_RESULT[action], ...("text" in payload ? { draft: String(payload.text) } : {}), version: t.version + 1 };
   else try { next = await frontAction<MailTicket>(t, action, payload); } catch (e) { fail(e); return undefined; }
   put(next);
+  if (store.mode !== "demo") notifyAttention();
   return next;
 }
 
@@ -203,9 +212,12 @@ export function MailSections({ mail, opened, onOpen }: { mail: Mail; opened: str
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [opened, poll]);
+  const [missingDocument, setMissingDocument] = useState<string | null>(null);
+  const [deniedDocument, setDeniedDocument] = useState<string | null>(null);
+  const useOwnerDocument = hasAccountLaunch && ticket?.id !== missingDocument;
   const [draft, setDraft] = useState<string | null>(null);   // правка черновика, пока шторка открыта
   const saving = useRef<Promise<MailTicket | undefined> | null>(null);   // сохранение правки, которое ещё идёт
-  useEffect(() => { setDraft(null); saving.current = null; }, [opened]);
+  useEffect(() => { setDraft(null); setMissingDocument(null); setDeniedDocument(null); saving.current = null; }, [opened]);
   useEffect(() => { if (!mail.note) return; const t = setTimeout(() => set({ note: null }), 2400); return () => clearTimeout(t); }, [mail.note]);
 
   // решение уходит на сервер, только когда тост с отменой досчитал до конца
@@ -220,6 +232,19 @@ export function MailSections({ mail, opened, onOpen }: { mail: Mail; opened: str
     onToastCommit(() => void seen.then((card) => act(card, action, payload)));
     nav("toast:" + BUTTON[action][2]);
   };
+
+  const deliveredByVilar = handledByVilar(ticket) && hasSentReply(ticket);
+  const preview = ticket && isPreview(ticket) && !(deliveredByVilar && ticket.state === "accepted");
+  const content = ticket && (useOwnerDocument
+    ? <BoardDocument kind="mail" id={ticket.id} ticket={ticket} contentOnly={!!preview}
+        onText={preview ? undefined : setDraft} onMissing={setMissingDocument} onDenied={setDeniedDocument} />
+    : <MailContent ticket={ticket} />);
+  const sheet = ticket && sheetOf(ticket);
+  if (ticket && sheet) {
+    sheet.msg = undefined; // MailContent renders the summary together with the original.
+    if (useOwnerDocument || deliveredByVilar) sheet.draft = undefined;
+    if (ticket.id === deniedDocument || (hasAccountLaunch && !canEdit)) sheet.actions = [["Закрыть", "ghost", "close"]];
+  }
 
   return <>
     {mail.mode === "legacy"
@@ -238,16 +263,22 @@ export function MailSections({ mail, opened, onOpen }: { mail: Mail; opened: str
         </Section>}
       </>}
     {mail.note && <Toast key={mail.note.key} type="Error" text={mail.note.text} />}
-    {ticket && createPortal(
+    {ticket && sheet && createPortal(
       isQuarantine(ticket) ? <QuarantineSheet key={ticket.id} ticket={detail ?? ticket} sheet={sheetOf(ticket)}
         detailReady={Boolean(detail)} onUpdate={refreshDetail} onClose={() => selectMail(null)} /> :
-      isPreview(ticket) ? <PreviewSheet key={ticket.id} ticket={ticket} sheet={sheetOf(ticket)} onUpdate={refreshDetail} onClose={() => selectMail(null)} /> : <SheetView key={ticket.id} sheet={sheetOf(ticket)} onAction={(to) => decide(ticket, to)}
-        draftReadOnly={!ticket.actions.includes("edit_reply")}
-        draftCaption={ticket.state === "sent" ? "Отправлено от вашего имени" : ticket.state === "sending" ? "Отправляется от вашего имени" : cannotSend(ticket) || ticket.actions.includes("approve_preview") || ticket.state === "approved_preview" ? "Черновик ответа" : undefined}
+      preview ? <PreviewSheet key={ticket.id} denied={ticket.id === deniedDocument} ticket={ticket} sheet={sheet} onUpdate={refreshDetail} onClose={() => selectMail(null)}>{content}</PreviewSheet> : <SheetView key={ticket.id} sheet={sheet} onAction={(to) => decide(ticket, to)}
+        draftReadOnly={(hasAccountLaunch && !canEdit) || !ticket.actions.includes("edit_reply")}
+        draftCaption={ticket.state === "sent" ? "Отправлено от вашего имени" : ticket.state === "sending" ? "Отправляется от вашего имени" : cannotSend(ticket) || ticket.actions.includes("approve_preview") || ticket.state === "approved_preview" ? "Черновик ответа" : "Черновик ответа в Vilar"}
         note={ticket.actions.includes("approve_preview") || ticket.state === "approved_preview" ? "Отправка отключена на время проверки." : cannotSend(ticket) ? "отправить пока не могу: адрес ответа не подтверждён" : undefined}
-        onDraft={(text) => { setDraft(text); saving.current = act(ticket, "edit_reply", { text }); }}>
-        {/* сжимки от Vilar ещё нет — показываем главную фразу письма как есть */}
-        {!ticket.summary && ticket.quote && <p className="t-body-l" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>«{ticket.quote}»</p>}
+        onDraft={(text) => {
+          setDraft(text);
+          const cycle = openCycle.current;
+          saving.current = act(ticket, "edit_reply", { text }).then(updated => {
+            if (updated) refreshDetail(updated, cycle);
+            return updated;
+          });
+        }}>
+        {content}
       </SheetView>,
       document.querySelector(".app")!,
     )}

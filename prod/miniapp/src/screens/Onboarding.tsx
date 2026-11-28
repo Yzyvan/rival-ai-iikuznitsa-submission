@@ -48,6 +48,14 @@ function ToggleCard({ title, sub, on, onChange }: { title: string; sub?: string;
     </div>
   );
 }
+/** Правило, которое нельзя отключить: та же карточка, но без переключателя */
+function FixedCard({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div className="toggle-row">
+      <div className="list-row__text"><span className="t-body-l">{title}</span>{sub && <span className="t-body-m c-secondary">{sub}</span>}</div>
+    </div>
+  );
+}
 /** Ползунок с пятью рисками: останавливается только на них (как выбор уровня модели) */
 function Slider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const box = useRef<HTMLDivElement>(null);
@@ -76,13 +84,19 @@ const PROJECTS: { name: string; tags: string[]; status: number; hint?: string }[
 const LEVELS = ["Совсем неважно", "Неважно", "Средне", "Важно", "Очень важно"];
 const KINDS = [
   { title: "Встречи с партнёрами", sub: "пример: Партнёрский канал, четверг 15:00", on: true },
-  { title: "Согласование бюджетов", sub: "пример: перенос 400 тыс. ₽ в digital", on: true },
-  { title: "КП и скидки клиентам", sub: "пример: скидка 12% для «ТехноСтрой»", on: true },
-  { title: "Найм", sub: "пример: оффер аккаунт-менеджеру", on: true },
+  // fixed — решает только руководитель (деньги, обязательства клиентам, кадры): отключить нельзя
+  { title: "Согласование бюджетов", sub: "пример: перенос 400 тыс. ₽ в digital", on: true, fixed: true },
+  { title: "КП и скидки клиентам", sub: "пример: скидка 12% для «ТехноСтрой»", on: true, fixed: true },
+  { title: "Найм", sub: "пример: оффер аккаунт-менеджеру", on: true, fixed: true },
   { title: "Планёрки команды", sub: "пример: e-com, понедельник", on: false },
 ];
-const BUDGET = ["20 тыс. ₽", "100 тыс. ₽", "Любая", "Другое"];
-const DISCOUNT = ["5%", "10%", "Любая", "Другое"];
+// То, что Vilar никогда не решает сам. Порогов по сумме нет: деньги и бюджеты — к руководителю при любой сумме.
+const ALWAYS = [
+  { title: "Деньги и бюджеты", sub: "скидки, перераспределения, закупки — любая сумма" },
+  { title: "Кадры", sub: "найм, офферы, отпуска, увольнения" },
+  { title: "Обязательства клиентам", sub: "сроки, условия, гарантии" },
+  { title: "Письма руководству", sub: "коммерческому директору и выше" },
+];
 const IMPORTANCE = ["Очень важно", "Важно и выше", "Средне и выше", "Любая"];
 const LEADS = ["за 15 мин", "за 30 мин", "за 1 час", "Другое"];
 const LEAD_MIN = [15, 30, 60];
@@ -109,7 +123,7 @@ const NOTIFY = [
   { title: "В сводке", sub: "вечером, одним списком" },
 ];
 const AUTH_PROJECTS = ["«Ромашка-Ритейл»", "«ТехноСтрой»", "Партнёрский канал"];
-const ACTIONS = ["Переносы встреч", "Напоминания исполнителям", "Изменения условий клиенту"];
+const ACTIONS = ["Переносы внутренних встреч", "Напоминания исполнителям", "Передача запросов команде"];
 const MODES = ["Предложить", "Спросить", "Сделать сам"];
 const VERB = ["только предлагаю", "сначала согласую с вами", "делаю сам и сообщаю"];
 const plural = (n: number, one: string, few: string, many: string) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
@@ -125,7 +139,7 @@ const SCREENS = [
   { title: "Найденные проекты", sub: "Отметьте, что из этого сейчас в работе", step: 1 },
   { title: "Важность проектов", sub: "От этого зависит, с чем я прихожу к вам, а что решаю сам", step: 1 },
   { title: "Виды работы", sub: "Какие из этих дел требуют вашего времени?", step: 1 },
-  { title: "Что делать не смогу", sub: "Остальное решаю сам и сообщаю в вечерней сводке", step: 1 },
+  { title: "Что делать не смогу", sub: "Это решаете только вы. Остальное делаю сам и сообщаю в утренней сводке", step: 1 },
   { title: "Резюме перед встречей", sub: "Пришлю, кто будет, о чём договорились в прошлый раз и что нужно решить", step: 2 },
   { title: "Что пострадает", sub: "Если вы ответите партнёру только после встречи — чем это грозит?", step: 2 },
   { title: "Когда вам писать", sub: "Если после вашей встречи подходящего окна уже не останется", step: 2 },
@@ -160,15 +174,13 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
   const [kinds, setKinds] = useState(KINDS.map((k) => k.on));
   const [newKind, setNewKind] = useState<string | null>(null);
   const addKind = () => { const n = (newKind ?? "").trim(); if (n) { buzz("light"); setKindList((a) => [...a, { title: n, sub: "добавлено вами", on: true }]); setKinds((a) => [...a, true]); } setNewKind(null); };
-  const [budgetOwn, setBudgetOwn] = useState(""), [discOwn, setDiscOwn] = useState("");
-  const [budget, setBudget] = useState(0), [disc, setDisc] = useState(1), [impMin, setImpMin] = useState(1);
-  const [always, setAlways] = useState([true, true]);
+  const [impMin, setImpMin] = useState(1);
   const [lead, setLead] = useState(1), [leadOwn, setLeadOwn] = useState("");
   const [meetKinds, setMeetKinds] = useState(MEET_KINDS.map((k) => k.on));
   const [conseq, setConseq] = useState([true, true, false, false, false]);
   const [notify, setNotify] = useState(1);
   // полномочия: общий режим для всех проектов и отличия по проектам (null — как для всех)
-  const [allModes, setAllModes] = useState([2, 2, 1]);
+  const [allModes, setAllModes] = useState([2, 2, 2]);
   const [own, setOwn] = useState<(number | null)[][]>([[1, null, null], [null, null, null], [null, null, null]]);
   const [open, setOpen] = useState<number | null>(0);
   const modeOf = (p: number, a: number) => own[p][a] ?? allModes[a];
@@ -189,13 +201,7 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
   const resumeAt = (from: number) => hhmm(from - leadMin);
   const withResume = TOMORROW.filter(([, , , k]) => meetKinds[k]);
   const nKinds = kinds.filter(Boolean).length + 1;   // + «Совет директоров» — редкое, но важное
-  const alwaysList = ["письма руководству", "обязательства клиентам"].filter((_, k) => always[k]);
-  const money = (v: string) => Number(v).toLocaleString("ru-RU");
-  const rules = [
-    budget < 2 ? `бюджет больше ${BUDGET[budget]}` : budget === 3 && budgetOwn ? `бюджет больше ${money(budgetOwn)} ₽` : "любой бюджет",
-    disc < 2 ? `скидка больше ${DISCOUNT[disc]}` : disc === 3 && discOwn ? `скидка больше ${discOwn}%` : "любая скидка",
-    ["проект «очень важно»", "проект «важно» и выше", "проект «средне» и выше", "любой проект"][impMin],
-  ];
+  const projectRule = ["проект «очень важно»", "проект «важно» и выше", "проект «средне» и выше", "любой проект"][impMin];
 
   const s = SCREENS[i];
   let content: ReactNode;
@@ -247,7 +253,9 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
       <Button label="Дальше" fill onClick={next} />
     </>); break;
     case 3: content = (<>
-      {kindList.map((k, n) => <ToggleCard key={k.title} title={k.title} sub={k.sub} on={kinds[n]} onChange={(v) => setKinds((a) => a.map((x, j) => (j === n ? v : x)))} />)}
+      {kindList.map((k, n) => "fixed" in k && k.fixed
+        ? <FixedCard key={k.title} title={k.title} sub={k.sub} />
+        : <ToggleCard key={k.title} title={k.title} sub={k.sub} on={kinds[n]} onChange={(v) => setKinds((a) => a.map((x, j) => (j === n ? v : x)))} />)}
       <div className="onb-card">
         <div className="onb-head onb-head--start"><span className="t-body-l">Совет директоров</span><Tag label="редкое" /></div>
         <Tags items={["раз в квартал", "источник: письмо Виктора Орлова"]} />
@@ -259,16 +267,12 @@ export function Onboarding({ active, onDone }: { active: boolean; onDone: () => 
       <Button label={`Подтвердить ${nKinds} ${nKinds % 10 >= 2 && nKinds % 10 <= 4 && (nKinds < 10 || nKinds > 20) ? "вида" : nKinds % 10 === 1 && nKinds !== 11 ? "вид" : "видов"}`} fill onClick={next} />
     </>); break;
     case 4: content = (<>
-      <Label>Деньги</Label>
-      <div className="onb-card"><span className="t-body-l">Согласование бюджета</span><span className="t-body-m c-secondary">прихожу, если сумма больше</span><Chips items={BUDGET} at={budget} onPick={setBudget} />{budget === 3 && <FloatField label="Сумма, ₽" inputMode="numeric" value={budgetOwn} onChange={(v) => setBudgetOwn(v.replace(/\D/g, "").slice(0, 9))} autoFocus className="onb-field" />}</div>
-      <div className="onb-card"><span className="t-body-l">Скидки клиентам</span><span className="t-body-m c-secondary">прихожу, если скидка больше</span><Chips items={DISCOUNT} at={disc} onPick={setDisc} />{disc === 3 && <FloatField label="Скидка, %" inputMode="numeric" value={discOwn} onChange={(v) => setDiscOwn(v.replace(/\D/g, "").slice(0, 2))} autoFocus className="onb-field" />}</div>
+      <Label>Всегда к вам</Label>
+      {ALWAYS.map((r) => <FixedCard key={r.title} title={r.title} sub={r.sub} />)}
       <Label>Проекты</Label>
       <div className="onb-card"><span className="t-body-l">Вопросы по проекту</span><span className="t-body-m c-secondary">прихожу, если важность проекта</span><Chips items={IMPORTANCE} at={impMin} onPick={setImpMin} /></div>
-      <Label>Всегда к вам</Label>
-      <ToggleCard title="Письма руководству" sub="отправляю только после вашего «да»" on={always[0]} onChange={(v) => setAlways([v, always[1]])} />
-      <ToggleCard title="Обязательства клиентам" sub="сроки, условия договора" on={always[1]} onChange={(v) => setAlways([always[0], v])} />
       <Divider />
-      <VilarMessage text={`Свод правил для вас: прихожу, если ${rules.join(", ").replace(/, ([^,]*)$/, " или $1")}.${alwaysList.length ? ` ${alwaysList.join(" и ").replace(/^./, (c) => c.toUpperCase())} — всегда к вам.` : ""}`} />
+      <VilarMessage text={`Свод правил для вас: деньги и бюджеты, кадры, обязательства клиентам и письма руководству — всегда к вам, без вашего «да» ничего не отправляю. По проектам прихожу, если ${projectRule}.`} />
       <Button label="Сохранить правила" fill onClick={next} />
     </>); break;
     case 5: content = (<>
