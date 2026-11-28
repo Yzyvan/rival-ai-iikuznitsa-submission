@@ -1,10 +1,11 @@
 import { useRef, useState } from "react";
 import { useSwipeDown } from "../ui/useSwipeDown";
 import type { SheetData } from "../data/sheets";
-import { Button, DraftCard, Status, Tags, VilarMessage } from "../ui";
+import { Button, DraftCard, Status, Tags, VilarHint, VilarMessage } from "../ui";
 
 /** Шторка поверх экрана. Закрывается по затемнению и по кнопке; действие может показать тост или увести на экран. */
-export function SheetView({ sheet: s, onAction, onDecision, children }: { children?: React.ReactNode; sheet: SheetData; onAction: (to: string) => void; onDecision?: (to: string) => Promise<void> }) {
+/** onDraft — правку черновика нужно сохранить; draftReadOnly — черновик без карандаша */
+export function SheetView({ sheet: s, onAction, onDecision, onDraft, draftReadOnly, draftCaption, note, children }: { children?: React.ReactNode; sheet: SheetData; onAction: (to: string) => void; onDecision?: (to: string) => Promise<void>; onDraft?: (text: string) => void; draftReadOnly?: boolean; draftCaption?: string; /** пояснение Vilar под черновиком */ note?: string }) {
   const [closing, setClosing] = useState(false);
   const busy = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -37,7 +38,8 @@ export function SheetView({ sheet: s, onAction, onDecision, children }: { childr
         </div>
         {children}
         {s.msg && <VilarMessage text={s.msg} />}
-        {s.draft && <DraftCard caption="Уйдёт от вашего имени" text={s.draft} />}
+        {s.draft && <DraftCard caption={draftCaption ?? "Уйдёт от вашего имени"} text={s.draft} onSave={onDraft} readOnly={draftReadOnly} />}
+        {note && <VilarHint text={note} />}
         {error && <p role="alert" className="t-body-m">{error}</p>}
         <div className="sheet__actions" aria-busy={saving}>
           {s.actions.map(([label, style, to]) => <Button key={label} label={label} variant={style} fill onClick={() => run(to)} />)}

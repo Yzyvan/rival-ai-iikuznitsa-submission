@@ -19,3 +19,31 @@ export VILAR_OUTLOOK_ACCOUNT='your-test-mailbox@outlook.com'
 Доступны чтение, подготовка нового черновика и ответа в цепочке, отправка выбранного черновика. За согласование текста и адресата с руководителем перед отправкой отвечает вызывающее приложение. Набор разрешений можно посмотреть через `./outlook permissions`.
 
 Зависимость: [Softeria MS-365 MCP Server](https://github.com/Softeria/ms-365-mcp-server).
+
+Event intake on the existing Outlook callback is opt-in. The callback process must be able
+to import the adapter from this directory and uses VILAR_MAIL_PUSH_DIR and
+VILAR_MAIL_CLIENT_STATE. The mail worker must use the same state directory. Before
+enabling mail, verify that calendar-only notifications still work with mail disabled.
+Run the public contract test with python3 test_mail_push.py from this directory.
+
+To end a temporary Inbox subscription, use mail_push.py unsubscribe --expected-id ID
+with its original mail state directory and HTTPS callback. The command checks the
+recorded ID, resource, callback and change type before deletion and verifies a
+provider 404 before removing the local subscription record.
+
+The temporary rule uses the exact existing URL with ?vilar_mail_pilot=1.
+preflight verifies the pinned mailbox and reads the complete subscription inventory
+without writing local state. For the existing stand set VILAR_MAIL_CALENDAR_REFERENCE
+to /var/lib/vilar-calendar-notify/subscription.json. The adapter verifies its exact
+Graph ID, live expiry, resource and unmarked URL and uses its creator and application
+without reading the user profile or requesting extra access. The app ID comes from MS365_MCP_CLIENT_ID or the existing calendar
+rule on the unmarked URL for the same user. A foreign or ambiguous rule, missing
+ownership evidence or an incomplete inventory stops the request.
+subscribe defaults to 45 minutes. Override with --ttl-minutes (45 through 720).
+After a lost create response, recover verifies the exact marked rule and restores
+its ID. A missing match after an uncertain create blocks a second POST. When the
+ID file is lost, unsubscribe without --expected-id can resolve the same unique
+marked rule and confirm its removal. An expired test with an unresolved intent
+can be examined without restarting intake. An empty local state returns
+no_owned_subscription on cancellation, even if another rule uses the URL. A
+recorded creation intent is required for recovery or cancellation of a remote rule.

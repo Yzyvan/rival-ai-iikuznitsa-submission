@@ -6,6 +6,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { createInterface } = require("node:readline");
+const { pathToFileURL } = require("node:url");
 const test = require("node:test");
 
 async function mailbox(t) {
@@ -119,4 +120,56 @@ test("five Outlook tools call the expected Graph routes over MCP stdio", async (
   assert.match(denied.content[0].text, /ErrorAccessDenied|Send denied/);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, "/v1.0/me/messages/draft-1/send");
+});
+
+test("immutable preference is confined to Microsoft Graph message identity reads", async () => {
+  const captured = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (input, options) => { captured.push({ input, options }); };
+  try {
+    await import(pathToFileURL(path.join(__dirname, "mail_graph_immutable.mjs")).href);
+    await fetch("https://graph.microsoft.com/v1.0/me/messages/regular%2Fid?$select=id,changeKey", {
+      headers: { Prefer: 'outlook.body-content-type="text"' },
+    });
+    await fetch("https://graph.microsoft.com/v1.0/me/messages/regular-id", { method: "PATCH" });
+    await fetch("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages");
+    await fetch("https://example.invalid/v1.0/me/messages/regular-id");
+    assert.equal(captured.length, 4);
+    assert.equal(captured[0].options.headers.get("Prefer"),
+      'outlook.body-content-type="text", IdType="ImmutableId"');
+    assert.deepEqual(captured.slice(1).map(({ options }) => options?.headers), [undefined, undefined, undefined]);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("pinned MCP sends the immutable ID preference for a regular message ID", async (t) => {
+  const { env } = await mailbox(t);
+  const preload = path.join(env.HOME, "graph-fixture.mjs");
+  await fs.writeFile(preload, `
+    globalThis.fetch = async (input, options) => {
+      const url = new URL(input);
+      if (url.origin !== "https://graph.microsoft.com" ||
+          url.pathname !== "/v1.0/me/messages/regular-id" ||
+          url.searchParams.get("$select") !== "id,changeKey,internetMessageId") {
+        throw new Error("Unexpected Graph identity request");
+      }
+      const headers = new Headers(options?.headers);
+      if (!headers.get("Prefer")?.includes('IdType="ImmutableId"')) {
+        throw new Error("Missing immutable Graph preference");
+      }
+      return Response.json({ id: "immutable-id", changeKey: "r1", internetMessageId: "<example@test>" });
+    };
+  `);
+  const result = spawnSync(process.execPath, [path.join(__dirname, "mail_graph.mjs")], {
+    env: { ...env, NODE_OPTIONS: "--import " + preload, MS365_MCP_OAUTH_TOKEN: "local-graph-fixture",
+      MS365_MCP_OUTPUT_FORMAT: "json" },
+    input: JSON.stringify({operation: "messageIdentity",
+      args: {messageId: "regular-id", select: "id,changeKey,internetMessageId"}}),
+    encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    id: "immutable-id", changeKey: "r1", internetMessageId: "<example@test>",
+  });
 });

@@ -51,6 +51,12 @@ export async function loadBrowserAccess() {
   try { sessionStorage.setItem("vilar:link-editable", String(canEdit)); } catch { /* storage unavailable */ }
 }
 
+export function launchHeaders(): Record<string, string> {
+  const launch = telegramLaunch();
+  if (launch) return { Authorization: "tma " + launch };
+  return browserTestCode ? { Authorization: (canEdit ? "vilar-edit " : "vilar-test ") + browserTestCode } : {};
+}
+
 export async function fetchBoardData(path: string, signal?: AbortSignal, body?: object) {
   const launch = telegramLaunch();
   const authorization = launch ? "tma " + launch : browserTestCode && ((canEdit ? "vilar-edit " : "vilar-test ") + browserTestCode);

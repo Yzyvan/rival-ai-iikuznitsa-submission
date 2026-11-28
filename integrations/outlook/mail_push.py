@@ -1,0 +1,316 @@
+"""Single-mailbox Graph Inbox creation listener. Run behind the staging TLS proxy."""
+import argparse
+import asyncio
+from contextlib import closing
+from datetime import datetime, timezone
+import fcntl
+import hashlib
+import hmac
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+from pathlib import Path
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+from urllib.parse import parse_qs, urlsplit
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sources"))
+from client import SourceClient
+
+CALLBACK = "/vilar/hooks/outlook-calendar"
+RESOURCE = "/me/mailFolders('inbox')/messages"
+
+
+def database(path):
+    db = sqlite3.connect(path, timeout=2)
+    db.row_factory = sqlite3.Row
+    return db
+
+
+def initialize(db):
+    with db:
+        db.execute("""CREATE TABLE IF NOT EXISTS incoming(
+            message_id TEXT PRIMARY KEY, deliveries INTEGER NOT NULL DEFAULT 1,
+            queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, envelope TEXT,
+            receipt TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+            retry_at INTEGER NOT NULL DEFAULT 0, last_error TEXT)""")
+
+
+def queue_notifications(db, payload, subscription, state):
+    notes = payload["value"]
+    if not isinstance(notes, list) or not 1 <= len(notes) <= 1000:
+        raise ValueError("batch")
+    with db:
+        for note in notes:
+            if (note.get("subscriptionId") != subscription or
+                    not hmac.compare_digest(str(note.get("clientState", "")).encode(), state.encode())):
+                raise PermissionError("unauthorized notification")
+            data = note["resourceData"]
+            mid = data["id"]
+            if (note["changeType"] != "created" or data.get("@odata.type", "").lower() != "#microsoft.graph.message"
+                    or not isinstance(mid, str) or not re.fullmatch(r"[A-Za-z0-9_+=/-]{1,1024}", mid)):
+                raise ValueError("invalid message notification")
+            db.execute("""INSERT INTO incoming(message_id) VALUES (?)
+                ON CONFLICT(message_id) DO UPDATE SET deliveries=deliveries+1""", (mid,))
+
+
+def receiver(path, subscription, state):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            target = urlsplit(self.path)
+            if target.path != CALLBACK:
+                self.send_error(404)
+                return
+            validation = parse_qs(target.query).get("validationToken")
+            if validation:
+                body = validation[0].encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 1024 * 1024:
+                    raise ValueError("length")
+                with closing(database(path)) as db:
+                    queue_notifications(db, json.loads(self.rfile.read(length)), subscription(), state)
+            except PermissionError:
+                self.send_error(403)
+                return
+            except (TypeError, AttributeError, ValueError, KeyError):
+                self.send_error(400)
+                return
+            except (OSError, sqlite3.Error):
+                self.send_error(503)
+                return
+            self.send_response(202)
+            self.end_headers()
+
+    return Handler
+
+
+def graph(operation, *, body_format="text", **args):
+    account = os.environ["VILAR_OUTLOOK_ACCOUNT"].lower()
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "MS365_MCP_CLIENT_ID") if k in os.environ}
+    env.update(XDG_CONFIG_HOME=str(Path.home()/".config/vilar/c01-outlook"/account),
+               MS365_MCP_EXPECTED_USERNAME=account, MS365_MCP_TENANT_ID="consumers",
+               MS365_MCP_USE_KEYTAR="false", MS365_MCP_BODY_FORMAT=body_format,
+               MS365_MCP_OUTPUT_FORMAT="json", LOG_LEVEL="error")
+    reply = subprocess.run(["node", str(Path(__file__).with_name("mail_graph.mjs"))],
+                           input=json.dumps({"operation": operation, "args": args}),
+                           text=True, capture_output=True, env=env, timeout=45, check=True)
+    return json.loads(reply.stdout)
+
+
+def verified_folder(provider, folder, message, mid):
+    from import_message import required
+
+    if message.get("id") != mid or message.get("isDraft") is not False:
+        raise ValueError("Unexpected Outlook message")
+    revision = required(message["changeKey"])
+    internet_id = required(message["internetMessageId"])
+    escaped = internet_id.replace("'", "''")
+    matches = provider("folderMessages", mailFolderId=folder, top=2,
+                       filter=f"internetMessageId eq '{escaped}'", select="id,changeKey")
+    rows = matches["value"]
+    if (matches.get("@odata.nextLink") or len(rows) != 1
+            or (rows[0]["id"], rows[0]["changeKey"]) != (mid, revision)):
+        raise ValueError("Outlook folder revision could not be verified")
+    return datetime.now(timezone.utc).isoformat()
+
+
+def immutable_identity(provider, message, mid):
+    identity = provider("messageIdentity", messageId=mid, select="id,changeKey,internetMessageId")
+    stable = identity.get("id")
+    if (not isinstance(stable, str) or not re.fullmatch(r"[A-Za-z0-9_+=/-]{1,1024}", stable)
+            or (identity.get("changeKey"), identity.get("internetMessageId"))
+            != (message["changeKey"], message["internetMessageId"])):
+        raise ValueError("Outlook immutable identity could not be verified")
+    return stable
+
+
+def fetch_envelope(provider, account, mid):
+    from import_message import FIELDS, NATIVE_BODY, event_for, required, resolve_parent
+
+    message = provider("message", messageId=mid, select=FIELDS + ",internetMessageId",
+                       expand=f"attachments($select=id),singleValueExtendedProperties($filter=id eq '{NATIVE_BODY}')")
+    observed = verified_folder(provider, "inbox", message, mid)
+    stable = immutable_identity(provider, message, mid)
+    revision = required(message["changeKey"])
+    internet_id = required(message["internetMessageId"])
+
+    async def parent_lookup(_tool, args):
+        return provider("folderMessages", **args)
+
+    try:
+        parent = asyncio.run(resolve_parent(parent_lookup, message, internet_id))
+        event = event_for(message, account, mid, revision, "create", parent)
+        event["source"].update(immutable_id=stable, observed_at=observed)
+        return event
+    except (ValueError, KeyError, TypeError, AttributeError, IndexError):
+        # A verified Inbox revision with unsupported material must stop at the security gate.
+        source = dict(provider="mail", account=account, channel="inbox", object=mid,
+                      revision=revision, change="create", thread=message.get("conversationId"),
+                      actor_external=(message.get("from") or {}).get("emailAddress", {}).get("address"),
+                      occurred_at=message.get("receivedDateTime"), immutable_id=stable, observed_at=observed)
+        native = message.get("singleValueExtendedProperties") or []
+        if (message.get("hasAttachments") is False and message.get("attachments") == []
+                and not message.get("attachments@odata.nextLink")
+                and any(isinstance(v, dict) and v.get("id", "").lower() == NATIVE_BODY.lower()
+                        and v.get("value") == "3" for v in native)):
+            html = provider("message", body_format="html", messageId=mid,
+                            select="id,changeKey,conversationId,body")
+            if (html.get("id"), html.get("changeKey"), html.get("conversationId")) != (
+                mid, revision, message.get("conversationId")
+            ) or (html.get("body") or {}).get("contentType", "").lower() != "html":
+                raise ValueError("Native body revision could not be verified")
+            message["body"] = html["body"]
+        return {"source": source, "original_ref": mid, "data": message}
+
+
+def fetch_junk_envelope(provider, account, mid):
+    """Transfer the verified original to closed intake, requesting attachment IDs only."""
+    from import_message import required
+
+    raw = provider(
+        "message", body_format="html", messageId=mid,
+        select="id,changeKey,internetMessageId,receivedDateTime,lastModifiedDateTime,isDraft,"
+               "conversationId,subject,body,hasAttachments,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo",
+        expand="attachments($select=id)",
+    )
+    observed = verified_folder(provider, "junkemail", raw, mid)
+    stable = immutable_identity(provider, raw, mid)
+    attachments = raw.get("attachments")
+    if isinstance(attachments, list):
+        raw["attachments"] = [{"id": required(item["id"])} for item in attachments]
+    if raw.get("attachments@odata.nextLink"):
+        raw["attachments@odata.nextLink"] = True
+    sender = (raw.get("from") or {}).get("emailAddress", {}).get("address")
+    return {"source": dict(provider="mail", account=account, channel="junkemail", object=mid,
+                           revision=required(raw["changeKey"]), change="create",
+                           thread=raw.get("conversationId"), actor_external=sender,
+                           occurred_at=required(raw["receivedDateTime"]),
+                           immutable_id=stable, observed_at=observed),
+            "original_ref": mid, "data": raw}
+
+
+def process_one(db, fetch, core):
+    row = db.execute("""SELECT * FROM incoming WHERE receipt IS NULL AND retry_at<=unixepoch()
+                        ORDER BY queued_at, rowid LIMIT 1""").fetchone()
+    if row is None:
+        return False
+    mid = row["message_id"]
+    try:
+        if not row["envelope"]:
+            raw = json.dumps(fetch(mid), ensure_ascii=False, separators=(",", ":"))
+            with db:
+                db.execute("UPDATE incoming SET envelope=? WHERE message_id=? AND envelope IS NULL", (raw, mid))
+        event = json.loads(db.execute("SELECT envelope FROM incoming WHERE message_id=?", (mid,)).fetchone()[0])
+        source = event["source"]
+        identity = [source[k] for k in ("provider", "account", "channel", "object", "revision")]
+        key = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
+        status, accepted = core.submit(event, key)
+        eid = accepted["event_id"]
+        if status != 202 or not re.fullmatch(r"evt-[0-9a-f]{32}", eid):
+            raise ValueError("invalid Core acceptance")
+        status, result = core.read(eid)
+        if (status != 200 or result["event_id"] != eid or result["correlation_id"] != accepted["correlation_id"]
+                or result["status"] not in {"received", "admitted", "quarantined", "security_blocked"}):
+            raise ValueError("invalid Core receipt")
+        with db:
+            db.execute("UPDATE incoming SET receipt=?,last_error=NULL WHERE message_id=?", (eid, mid))
+    except Exception as exc:
+        # Retain the frozen revision across a lost response or a service restart.
+        delay = min(300, 2 ** min(row["attempts"] + 1, 9))
+        with db:
+            db.execute("""UPDATE incoming SET attempts=attempts+1,retry_at=unixepoch()+?,last_error=?
+                          WHERE message_id=? AND receipt IS NULL""", (delay, type(exc).__name__, mid))
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=["serve", "work", "status", "subscribe", "renew", "unsubscribe", "recover", "preflight"])
+    parser.add_argument("--expected-id", help="exact recorded mail subscription to remove")
+    parser.add_argument("--ttl-minutes", type=int, default=45)
+    parser.add_argument("--recover-since", type=datetime.fromisoformat,
+                        help="First allowed receivedDateTime checkpoint for Inbox recovery")
+    parser.add_argument("--folder", choices=["inbox", "junkemail"], default="inbox",
+                        help="Folder for polling and queue status")
+    args = parser.parse_args()
+    if args.folder == "junkemail" and (args.command not in {"status", "work"}
+                                      or args.command == "work" and args.recover_since is None):
+        parser.error("Junk folder ingestion requires work with a recovery checkpoint")
+    os.umask(0o077)
+    anchor_path = os.getenv("VILAR_MAIL_CALENDAR_REFERENCE")
+    anchor = Path(anchor_path) if anchor_path else None
+    if args.command == "preflight":
+        from mail_subscription import prepare
+        _, match = prepare(graph, os.environ["VILAR_MAIL_CALLBACK"], RESOURCE, CALLBACK,
+                           os.getenv("MS365_MCP_CLIENT_ID"), os.environ["VILAR_OUTLOOK_ACCOUNT"].lower(), anchor)
+        print(json.dumps({"status": "matched" if match else "vacant"}))
+        return
+    directory = Path(os.environ["VILAR_MAIL_PUSH_DIR"])
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory / f"{args.folder}.sqlite3"
+    subscription = directory / "subscription"
+    with closing(database(path)) as db:
+        initialize(db)
+        if args.command == "status":
+            for row in db.execute("SELECT queued_at,message_id,deliveries,receipt,attempts,last_error FROM incoming ORDER BY rowid DESC LIMIT 100"):
+                entry = dict(row)
+                entry["message_id"] = hashlib.sha256(entry["message_id"].encode()).hexdigest()[:16]
+                print(json.dumps(entry))
+            return
+        if args.command == "serve":
+            state = os.environ["VILAR_MAIL_CLIENT_STATE"]
+            if len(state) < 32:
+                parser.error("client state must be at least 32 characters")
+            ThreadingHTTPServer(("127.0.0.1", int(os.getenv("VILAR_MAIL_PORT", "18767"))),
+                                receiver(path, lambda: subscription.read_text().strip(), state)).serve_forever()
+            return
+        account = os.environ["VILAR_OUTLOOK_ACCOUNT"].strip().lower()
+        if args.command == "work":
+            core = SourceClient(os.environ["VILAR_API_URL"], os.environ["VILAR_SOURCE_TOKEN"])
+            next_recovery = 0
+            fetch = fetch_envelope if args.folder == "inbox" else fetch_junk_envelope
+            if args.recover_since is not None:
+                from mail_backfill import graph_time, recover_inbox
+                graph_time(args.recover_since)
+            while True:
+                if args.recover_since is not None and time.monotonic() >= next_recovery:
+                    next_recovery = time.monotonic() + 300
+                    until = datetime.now(timezone.utc)
+                    # A move can modify a message received before the current arrival window.
+                    # Keep independent checkpoints so a failed move query cannot block arrivals.
+                    for date_field in ("receivedDateTime", "lastModifiedDateTime"):
+                        try:
+                            recover_inbox(db, graph, initial_since=args.recover_since, until=until,
+                                          mail_folder=args.folder, date_field=date_field)
+                        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
+                            print(f"{args.folder} {date_field} recovery deferred:",
+                                  type(exc).__name__, file=sys.stderr, flush=True)
+                if not process_one(db, lambda mid: fetch(graph, account, mid), core):
+                    time.sleep(0.5)
+        else:
+            # Serialize operator changes to this mailbox's recorded rule.
+            with (directory / "subscription.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                from mail_subscription import manage
+                result = manage(graph, subscription, args.command, args.expected_id,
+                                os.environ["VILAR_MAIL_CALLBACK"], os.environ["VILAR_MAIL_CLIENT_STATE"],
+                                account, os.getenv("MS365_MCP_CLIENT_ID"), args.ttl_minutes, RESOURCE, CALLBACK, anchor)
+                print(json.dumps({k: result[k] for k in ("id","expirationDateTime","status") if k in result}))
+
+
+if __name__ == "__main__":
+    main()

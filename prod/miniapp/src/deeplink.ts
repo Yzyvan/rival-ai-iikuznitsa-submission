@@ -12,7 +12,7 @@ import { boards, columns, type StageId } from "./data/content";
 import { sheets } from "./data/sheets";
 import type { TabId } from "./ui";
 
-export type DeepLink = { skip: boolean; tab?: TabId; stage?: StageId; screens: string[]; sheet?: string };
+export type DeepLink = { skip: boolean; tab?: TabId; stage?: StageId; screens: string[]; sheet?: string; mailTicket?: string };
 
 const TABS: TabId[] = ["board", "tasks", "stats"];
 
@@ -48,6 +48,9 @@ export function readDeepLink(nested: Record<string, unknown>, live = false, show
     const cut = t.indexOf(":"), kind = t.slice(0, cut), id = t.slice(cut + 1);
     if (kind === "tab" && TABS.includes(id as TabId)) link.tab = id as TabId;
     else if (kind === "board" && id in boards) { link.tab = "board"; link.stage = id as StageId; }
+    else if (live && kind === "mail" && /^[de]-[A-Za-z0-9_-]{1,150}$/.test(id)) {
+      link.tab = "board"; link.stage = "mail"; link.mailTicket = id;
+    }
     else if (live && kind === "screen" && ["protocol", "delivery", "delivery-done"].includes(id)) {
       link.tab = "board"; link.stage = "meetings";
     }
