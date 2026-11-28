@@ -5,16 +5,20 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const request = JSON.parse(readFileSync(0, "utf8"));
-const operations = { message: "get-mail-message", folderMessages: "list-mail-folder-messages", create: "create-subscription", renew: "update-subscription", me: "get-current-user", list: "list-subscriptions", inspect: "get-subscription", remove: "delete-subscription" };
+const operations = { message: "get-mail-message", messageIdentity: "get-mail-message", folderMessages: "list-mail-folder-messages", create: "create-subscription", renew: "update-subscription", me: "get-current-user", list: "list-subscriptions", inspect: "get-subscription", remove: "delete-subscription" };
 const tool = operations[request.operation];
+const immutable = request.operation === "messageIdentity";
 if (!tool) throw new Error("Unsupported Outlook operation");
 const client = new Client({name: "vilar-mail-stage", version: "1"});
 try {
   const args = ["--enabled-tools", "^" + tool + "$", "--allowed-scopes", "Mail.Read Calendars.Read User.Read"];
-  if (["message", "folderMessages", "inspect", "me", "list"].includes(request.operation)) args.push("--read-only");
+  if (["message", "messageIdentity", "folderMessages", "inspect", "me", "list"].includes(request.operation)) args.push("--read-only");
+  const entry = fileURLToPath(new URL("./node_modules/.bin/ms-365-mcp-server", import.meta.url));
+  const preload = fileURLToPath(new URL("./mail_graph_immutable.mjs", import.meta.url));
   await client.connect(new StdioClientTransport({
-    command: fileURLToPath(new URL("./node_modules/.bin/ms-365-mcp-server", import.meta.url)),
-    args, env: process.env, stderr: "ignore",
+    command: immutable ? process.execPath : entry,
+    args: immutable ? ["--import", preload, entry, ...args] : args,
+    env: process.env, stderr: "ignore",
   }));
   const result = await client.callTool({name: tool, arguments: request.args});
   if (result.isError) {

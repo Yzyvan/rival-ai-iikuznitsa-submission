@@ -111,34 +111,57 @@ def graph(operation, *, body_format="text", **args):
     return json.loads(reply.stdout)
 
 
+def verified_folder(provider, folder, message, mid):
+    from import_message import required
+
+    if message.get("id") != mid or message.get("isDraft") is not False:
+        raise ValueError("Unexpected Outlook message")
+    revision = required(message["changeKey"])
+    internet_id = required(message["internetMessageId"])
+    escaped = internet_id.replace("'", "''")
+    matches = provider("folderMessages", mailFolderId=folder, top=2,
+                       filter=f"internetMessageId eq '{escaped}'", select="id,changeKey")
+    rows = matches["value"]
+    if (matches.get("@odata.nextLink") or len(rows) != 1
+            or (rows[0]["id"], rows[0]["changeKey"]) != (mid, revision)):
+        raise ValueError("Outlook folder revision could not be verified")
+    return datetime.now(timezone.utc).isoformat()
+
+
+def immutable_identity(provider, message, mid):
+    identity = provider("messageIdentity", messageId=mid, select="id,changeKey,internetMessageId")
+    stable = identity.get("id")
+    if (not isinstance(stable, str) or not re.fullmatch(r"[A-Za-z0-9_+=/-]{1,1024}", stable)
+            or stable == mid or (identity.get("changeKey"), identity.get("internetMessageId"))
+            != (message["changeKey"], message["internetMessageId"])):
+        raise ValueError("Outlook immutable identity could not be verified")
+    return stable
+
+
 def fetch_envelope(provider, account, mid):
     from import_message import FIELDS, NATIVE_BODY, event_for, required, resolve_parent
 
     message = provider("message", messageId=mid, select=FIELDS + ",internetMessageId",
                        expand=f"attachments($select=id),singleValueExtendedProperties($filter=id eq '{NATIVE_BODY}')")
-    if message["id"] != mid:
-        raise ValueError("unexpected Graph message")
+    observed = verified_folder(provider, "inbox", message, mid)
+    stable = immutable_identity(provider, message, mid)
     revision = required(message["changeKey"])
     internet_id = required(message["internetMessageId"])
-    escaped = internet_id.replace("'", "''")
-    inbox = provider("folderMessages", mailFolderId="inbox", top=2,
-                     filter=f"internetMessageId eq '{escaped}'", select="id,changeKey")
-    if (inbox.get("@odata.nextLink") or len(inbox["value"]) != 1
-            or inbox["value"][0]["id"] != mid or inbox["value"][0]["changeKey"] != revision):
-        raise ValueError("Inbox revision could not be verified")
 
     async def parent_lookup(_tool, args):
         return provider("folderMessages", **args)
 
     try:
         parent = asyncio.run(resolve_parent(parent_lookup, message, internet_id))
-        return event_for(message, account, mid, revision, "create", parent)
+        event = event_for(message, account, mid, revision, "create", parent)
+        event["source"].update(immutable_id=stable, observed_at=observed)
+        return event
     except (ValueError, KeyError, TypeError, AttributeError, IndexError):
         # A verified Inbox revision with unsupported material must stop at the security gate.
         source = dict(provider="mail", account=account, channel="inbox", object=mid,
                       revision=revision, change="create", thread=message.get("conversationId"),
                       actor_external=(message.get("from") or {}).get("emailAddress", {}).get("address"),
-                      occurred_at=message.get("receivedDateTime"))
+                      occurred_at=message.get("receivedDateTime"), immutable_id=stable, observed_at=observed)
         native = message.get("singleValueExtendedProperties") or []
         if (message.get("hasAttachments") is False and message.get("attachments") == []
                 and not message.get("attachments@odata.nextLink")
@@ -155,24 +178,29 @@ def fetch_envelope(provider, account, mid):
 
 
 def fetch_junk_envelope(provider, account, mid):
-    """Verify the Junk folder and persist identity and timing without reading message content."""
+    """Transfer the verified original to closed intake, requesting attachment IDs only."""
     from import_message import required
 
-    original = provider("message", messageId=mid,
-                        select="id,changeKey,internetMessageId,receivedDateTime,isDraft")
-    if original.get("id") != mid or original.get("isDraft") is not False:
-        raise ValueError("Unexpected Junk message")
-    revision = required(original["changeKey"])
-    internet_id = required(original["internetMessageId"]).replace("'", "''")
-    matches = provider("folderMessages", mailFolderId="junkemail", top=2,
-                       filter=f"internetMessageId eq '{internet_id}'", select="id,changeKey")
-    rows = matches["value"]
-    if (matches.get("@odata.nextLink") or len(rows) != 1
-            or (rows[0]["id"], rows[0]["changeKey"]) != (mid, revision)):
-        raise ValueError("Junk revision could not be verified")
+    raw = provider(
+        "message", body_format="html", messageId=mid,
+        select="id,changeKey,internetMessageId,receivedDateTime,lastModifiedDateTime,isDraft,"
+               "conversationId,subject,body,hasAttachments,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo",
+        expand="attachments($select=id)",
+    )
+    observed = verified_folder(provider, "junkemail", raw, mid)
+    stable = immutable_identity(provider, raw, mid)
+    attachments = raw.get("attachments")
+    if isinstance(attachments, list):
+        raw["attachments"] = [{"id": required(item["id"])} for item in attachments]
+    if raw.get("attachments@odata.nextLink"):
+        raw["attachments@odata.nextLink"] = True
+    sender = (raw.get("from") or {}).get("emailAddress", {}).get("address")
     return {"source": dict(provider="mail", account=account, channel="junkemail", object=mid,
-                           revision=revision, change="create", occurred_at=required(original["receivedDateTime"])),
-            "data": {"outlook_junk_folder": True}}
+                           revision=required(raw["changeKey"]), change="create",
+                           thread=raw.get("conversationId"), actor_external=sender,
+                           occurred_at=required(raw["receivedDateTime"]),
+                           immutable_id=stable, observed_at=observed),
+            "original_ref": mid, "data": raw}
 
 
 def process_one(db, fetch, core):
@@ -261,11 +289,16 @@ def main():
             while True:
                 if args.recover_since is not None and time.monotonic() >= next_recovery:
                     next_recovery = time.monotonic() + 300
-                    try:
-                        recover_inbox(db, graph, initial_since=args.recover_since,
-                                      until=datetime.now(timezone.utc), mail_folder=args.folder)
-                    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
-                        print(f"{args.folder} recovery deferred:", type(exc).__name__, file=sys.stderr, flush=True)
+                    until = datetime.now(timezone.utc)
+                    # A move can modify a message received before the current arrival window.
+                    # Keep independent checkpoints so a failed move query cannot block arrivals.
+                    for date_field in ("receivedDateTime", "lastModifiedDateTime"):
+                        try:
+                            recover_inbox(db, graph, initial_since=args.recover_since, until=until,
+                                          mail_folder=args.folder, date_field=date_field)
+                        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
+                            print(f"{args.folder} {date_field} recovery deferred:",
+                                  type(exc).__name__, file=sys.stderr, flush=True)
                 if not process_one(db, lambda mid: fetch(graph, account, mid), core):
                     time.sleep(0.5)
         else:

@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock
 
 from mail_backfill import recover_inbox
-from mail_push import database, fetch_junk_envelope, initialize, process_one, queue_notifications
+from mail_push import database, fetch_envelope, fetch_junk_envelope, initialize, process_one, queue_notifications
 from mail_subscription import manage, prepare
 
 
@@ -68,17 +68,93 @@ class MailPushContractTest(unittest.TestCase):
                                  ["first", "second"])
                 self.assertNotEqual(db.execute("SELECT recovered_until FROM inbox_recovery").fetchone()[0], before)
 
-    def test_junk_uses_verified_folder_and_never_requests_message_content(self):
-        message = dict(id="mid", changeKey="r1", internetMessageId="internet",
-                       receivedDateTime="2026-11-28T02:15:00Z", isDraft=False)
-        provider = Mock(side_effect=[message, {"value": [{"id": "mid", "changeKey": "r1"}]}])
-        event = fetch_junk_envelope(provider, "owner@example.test", "mid")
-        self.assertEqual(event["source"]["channel"], "junkemail")
-        self.assertEqual(event["data"], {"outlook_junk_folder": True})
-        fields = provider.call_args_list[0].kwargs["select"].split(",")
-        self.assertNotIn("body", fields)
-        self.assertNotIn("subject", fields)
-        self.assertEqual(provider.call_args_list[1].kwargs["mailFolderId"], "junkemail")
+    def test_inbox_and_junk_observations_share_one_verified_identity(self):
+        sender = {"emailAddress": {"address": "sender@example.test"}}
+        def provider(mid, folder):
+            message = {
+                "id": mid, "changeKey": f"rev-{folder}", "internetMessageId": "<internet@example.test>",
+                "receivedDateTime": "2026-11-28T02:15:00Z", "conversationId": "thread", "isDraft": False,
+                "from": sender, "sender": sender, "subject": "Subject",
+                "body": {"contentType": "html", "content": "<p>Message</p>"},
+                "hasAttachments": True, "attachments": [{"id": "attachment", "contentBytes": "not-stored"}],
+            }
+            return Mock(side_effect=[
+                message,
+                {"value": [{"id": mid, "changeKey": message["changeKey"]}]},
+                {**message, "id": "immutable"},
+            ])
+
+        reader = provider("regular-junk", "junkemail")
+        junk = fetch_junk_envelope(reader, "owner@example.test", "regular-junk")
+        inbox = fetch_envelope(provider("regular-inbox", "inbox"), "owner@example.test", "regular-inbox")
+        self.assertNotEqual(junk["source"]["object"], inbox["source"]["object"])
+        self.assertNotEqual(junk["source"]["revision"], inbox["source"]["revision"])
+        self.assertEqual(
+            (junk["source"]["immutable_id"], inbox["source"]["immutable_id"]), ("immutable", "immutable"),
+        )
+        self.assertEqual(junk["source"]["channel"], "junkemail")
+        self.assertEqual(junk["source"]["actor_external"], "sender@example.test")
+        self.assertIsNotNone(datetime.fromisoformat(junk["source"]["observed_at"]).utcoffset())
+        self.assertEqual(junk["data"]["body"], {"contentType": "html", "content": "<p>Message</p>"})
+        self.assertEqual(junk["data"]["attachments"], [{"id": "attachment"}])
+        self.assertEqual(reader.call_args_list[0].kwargs["expand"], "attachments($select=id)")
+        self.assertEqual(reader.call_args_list[0].kwargs["body_format"], "html")
+        self.assertEqual(reader.call_args_list[1].kwargs["mailFolderId"], "junkemail")
+        self.assertEqual(reader.call_args_list[2].args, ("messageIdentity",))
+        self.assertEqual(reader.call_args_list[2].kwargs["select"], "id,changeKey,internetMessageId")
+
+        for bad in (dict(id="regular-junk", changeKey="rev-junkemail", internetMessageId="<internet@example.test>"),
+                    dict(id="different", changeKey="moved-between-reads", internetMessageId="<internet@example.test>")):
+            reader = provider("regular-junk", "junkemail")
+            replies = list(reader.side_effect)
+            reader.side_effect = [*replies[:2], bad]
+            with self.assertRaisesRegex(ValueError, "immutable identity"):
+                fetch_junk_envelope(reader, "owner@example.test", "regular-junk")
+
+    def test_retry_after_lost_response_keeps_frozen_observed_at(self):
+        event = {"source": {"provider": "mail", "account": "owner@example.test", "channel": "junkemail",
+                            "object": "regular-junk", "revision": "r1", "immutable_id": "same",
+                            "observed_at": "2026-11-28T02:10:00+00:00"}, "data": {"subject": "Test"}}
+        receipt = {"event_id": "evt-" + "b"*32, "correlation_id": "corr"}
+        core = Mock()
+        core.submit.side_effect = [TimeoutError("reply lost"), (202, receipt)]
+        core.read.return_value = (200, {**receipt, "status": "quarantined"})
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "queue.sqlite3"
+            with closing(database(path)) as db:
+                initialize(db)
+                with db:
+                    db.execute("INSERT INTO incoming(message_id) VALUES ('regular-junk')")
+                self.assertTrue(process_one(db, Mock(return_value=event), core))
+            with closing(database(path)) as db:
+                with db:
+                    db.execute("UPDATE incoming SET retry_at=0")
+                unexpected_fetch = Mock(side_effect=AssertionError("the original observation was not frozen"))
+                self.assertTrue(process_one(db, unexpected_fetch, core))
+                unexpected_fetch.assert_not_called()
+                self.assertEqual(db.execute("SELECT receipt FROM incoming").fetchone()[0], receipt["event_id"])
+        self.assertEqual(core.submit.call_args_list[0], core.submit.call_args_list[1])
+
+    def test_recent_folder_move_queues_an_older_message(self):
+        start = datetime(2026, 11, 28, 2, 5, tzinfo=timezone.utc)
+        first = start.replace(minute=10)
+        provider = Mock(side_effect=[
+            {"value": []},
+            {"value": [{"id": "moved-id", "lastModifiedDateTime": "2026-11-28T02:08:00Z"}]},
+        ])
+        with tempfile.TemporaryDirectory() as folder, closing(database(Path(folder)/"queue.sqlite3")) as db:
+            initialize(db)
+            recover_inbox(db, provider, initial_since=start, until=first, mail_folder="junkemail")
+            with self.assertRaises(OSError):
+                recover_inbox(db, Mock(side_effect=OSError("move query unavailable")), initial_since=start,
+                              until=first, mail_folder="junkemail", date_field="lastModifiedDateTime")
+            self.assertIsNotNone(db.execute("SELECT recovered_until FROM inbox_recovery").fetchone())
+            self.assertIsNone(db.execute("SELECT recovered_until FROM mail_move_recovery").fetchone())
+            recover_inbox(db, provider, initial_since=start, until=first, mail_folder="junkemail",
+                          date_field="lastModifiedDateTime")
+            self.assertEqual(db.execute("SELECT message_id FROM incoming").fetchone()[0], "moved-id")
+        self.assertTrue(all(call.kwargs["mailFolderId"]=="junkemail" for call in provider.call_args_list))
+        self.assertIn("lastModifiedDateTime ge", provider.call_args_list[1].kwargs["filter"])
 
     def test_calendar_reference_verifies_mailbox_without_profile_read(self):
         base = "https://example.test/vilar/hooks/outlook-calendar"
