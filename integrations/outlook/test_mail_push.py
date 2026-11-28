@@ -1,10 +1,12 @@
 """Check repeated mail notifications using only the adapter and Core's published receipts."""
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock
 
+from mail_backfill import recover_inbox
 from mail_push import database, initialize, process_one, queue_notifications
 from mail_subscription import manage, prepare
 
@@ -40,6 +42,31 @@ class MailPushContractTest(unittest.TestCase):
         self.assertEqual(core.submit.call_args.args[0], event)
         self.assertTrue(core.submit.call_args.args[1])
         core.read.assert_called_once_with(receipt["event_id"])
+
+    def test_poll_failure_preserves_checkpoint_and_overlap_is_idempotent(self):
+        start = datetime(2026, 11, 28, 2, 5, tzinfo=timezone.utc)
+        first = start.replace(minute=10)
+        second = start.replace(minute=15)
+        existing = {"id": "first", "receivedDateTime": "2026-11-28T02:08:00Z"}
+        new = {"id": "second", "receivedDateTime": "2026-11-28T02:12:00Z"}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "inbox.sqlite3"
+            with closing(database(path)) as db:
+                initialize(db)
+                recover_inbox(db, lambda *_a, **_k: {"value": [existing]},
+                              initial_since=start, until=first)
+
+            with closing(database(path)) as db:
+                before = db.execute("SELECT recovered_until FROM inbox_recovery").fetchone()[0]
+                with self.assertRaises(OSError):
+                    recover_inbox(db, Mock(side_effect=OSError("temporary outage")),
+                                  initial_since=start, until=second)
+                self.assertEqual(db.execute("SELECT recovered_until FROM inbox_recovery").fetchone()[0], before)
+                recover_inbox(db, lambda *_a, **_k: {"value": [existing, new]},
+                              initial_since=start, until=second)
+                self.assertEqual([r[0] for r in db.execute("SELECT message_id FROM incoming ORDER BY message_id")],
+                                 ["first", "second"])
+                self.assertNotEqual(db.execute("SELECT recovered_until FROM inbox_recovery").fetchone()[0], before)
 
     def test_calendar_reference_verifies_mailbox_without_profile_read(self):
         base = "https://example.test/vilar/hooks/outlook-calendar"

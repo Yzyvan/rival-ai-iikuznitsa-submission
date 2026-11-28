@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 from contextlib import closing
+from datetime import datetime, timezone
 import fcntl
 import hashlib
 import hmac
@@ -97,12 +98,12 @@ def receiver(path, subscription, state):
     return Handler
 
 
-def graph(operation, **args):
+def graph(operation, *, body_format="text", **args):
     account = os.environ["VILAR_OUTLOOK_ACCOUNT"].lower()
     env = {k: os.environ[k] for k in ("PATH", "HOME", "MS365_MCP_CLIENT_ID") if k in os.environ}
     env.update(XDG_CONFIG_HOME=str(Path.home()/".config/vilar/c01-outlook"/account),
                MS365_MCP_EXPECTED_USERNAME=account, MS365_MCP_TENANT_ID="consumers",
-               MS365_MCP_USE_KEYTAR="false", MS365_MCP_BODY_FORMAT="text",
+               MS365_MCP_USE_KEYTAR="false", MS365_MCP_BODY_FORMAT=body_format,
                MS365_MCP_OUTPUT_FORMAT="json", LOG_LEVEL="error")
     reply = subprocess.run(["node", str(Path(__file__).with_name("mail_graph.mjs"))],
                            input=json.dumps({"operation": operation, "args": args}),
@@ -133,11 +134,23 @@ def fetch_envelope(provider, account, mid):
         parent = asyncio.run(resolve_parent(parent_lookup, message, internet_id))
         return event_for(message, account, mid, revision, "create", parent)
     except (ValueError, KeyError, TypeError, AttributeError, IndexError):
-        # A verified Inbox revision with unsupported material must stay in quarantine.
+        # A verified Inbox revision with unsupported material must stop at the security gate.
         source = dict(provider="mail", account=account, channel="inbox", object=mid,
                       revision=revision, change="create", thread=message.get("conversationId"),
                       actor_external=(message.get("from") or {}).get("emailAddress", {}).get("address"),
                       occurred_at=message.get("receivedDateTime"))
+        native = message.get("singleValueExtendedProperties") or []
+        if (message.get("hasAttachments") is False and message.get("attachments") == []
+                and not message.get("attachments@odata.nextLink")
+                and any(isinstance(v, dict) and v.get("id", "").lower() == NATIVE_BODY.lower()
+                        and v.get("value") == "3" for v in native)):
+            html = provider("message", body_format="html", messageId=mid,
+                            select="id,changeKey,conversationId,body")
+            if (html.get("id"), html.get("changeKey"), html.get("conversationId")) != (
+                mid, revision, message.get("conversationId")
+            ) or (html.get("body") or {}).get("contentType", "").lower() != "html":
+                raise ValueError("Native body revision could not be verified")
+            message["body"] = html["body"]
         return {"source": source, "original_ref": mid, "data": message}
 
 
@@ -162,7 +175,7 @@ def process_one(db, fetch, core):
             raise ValueError("invalid Core acceptance")
         status, result = core.read(eid)
         if (status != 200 or result["event_id"] != eid or result["correlation_id"] != accepted["correlation_id"]
-                or result["status"] not in {"received", "admitted", "quarantined"}):
+                or result["status"] not in {"received", "admitted", "quarantined", "security_blocked"}):
             raise ValueError("invalid Core receipt")
         with db:
             db.execute("UPDATE incoming SET receipt=?,last_error=NULL WHERE message_id=?", (eid, mid))
@@ -180,6 +193,8 @@ def main():
     parser.add_argument("command", choices=["serve", "work", "status", "subscribe", "renew", "unsubscribe", "recover", "preflight"])
     parser.add_argument("--expected-id", help="exact recorded mail subscription to remove")
     parser.add_argument("--ttl-minutes", type=int, default=45)
+    parser.add_argument("--recover-since", type=datetime.fromisoformat,
+                        help="First allowed receivedDateTime checkpoint for Inbox recovery")
     args = parser.parse_args()
     os.umask(0o077)
     anchor_path = os.getenv("VILAR_MAIL_CALENDAR_REFERENCE")
@@ -212,7 +227,18 @@ def main():
         account = os.environ["VILAR_OUTLOOK_ACCOUNT"].strip().lower()
         if args.command == "work":
             core = SourceClient(os.environ["VILAR_API_URL"], os.environ["VILAR_SOURCE_TOKEN"])
+            next_recovery = 0
+            if args.recover_since is not None:
+                from mail_backfill import graph_time, recover_inbox
+                graph_time(args.recover_since)
             while True:
+                if args.recover_since is not None and time.monotonic() >= next_recovery:
+                    next_recovery = time.monotonic() + 300
+                    try:
+                        recover_inbox(db, graph, initial_since=args.recover_since,
+                                      until=datetime.now(timezone.utc))
+                    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
+                        print("Inbox recovery deferred:", type(exc).__name__, file=sys.stderr, flush=True)
                 if not process_one(db, lambda mid: fetch_envelope(graph, account, mid), core):
                     time.sleep(0.5)
         else:
