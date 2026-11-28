@@ -24,7 +24,7 @@ export function Protocol() {
             <ListRow title="Оценить нагрузку на поддержку" subtitle="Мария Лебедева · 14:27" value="13 дек" onClick={() => nav("screen:task")} />
             <ListRow urgent title="Согласовать окно работ с клиентом" subtitle="нет исполнителя и срока" status={["уточнить", "Внимание", "Яркая"]} onClick={() => nav("screen:task")} />
           </Section>
-          <Section title="Остаётся у вас">
+          <Section title="Вопросы">
             <ListRow urgent title="Бюджет на пилот" subtitle="Ольга, 14:40 · не выдаётся" status={["открыт", "Нейтрально", "Темная"]} onClick={() => nav("sheet:q4")} />
           </Section>
           <Section title="Получат итог">

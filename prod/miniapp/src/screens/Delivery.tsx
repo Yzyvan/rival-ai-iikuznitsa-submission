@@ -14,7 +14,7 @@ export function Delivery({ done }: { done?: boolean }) {
   return (
     <div className="screen">
       <div className="scroll">
-        <ScreenHeader title="Выдача" left={<IconButton icon="arrow-left" label="Назад" onClick={() => nav("back")} />} right={<IconButton icon="dots-horizontal" label="Меню" onClick={() => nav("sheet:menu")} />} />
+        <ScreenHeader title="Рассылка" left={<IconButton icon="arrow-left" label="Назад" onClick={() => nav("back")} />} right={<IconButton icon="dots-horizontal" label="Меню" onClick={() => nav("sheet:menu")} />} />
         <div className="body body--plain">
           <div className="head">
             <div className="row" style={{ gap: 8 }}>
@@ -36,7 +36,7 @@ export function Delivery({ done }: { done?: boolean }) {
           {!done && <Button label="Повторить для Павла" fill onClick={() => nav("replace:delivery-done")} />}
           <Section title="Другие действия">
             <ListRow title="Созвон с клиентом 11 дек, 11:00" subtitle="4 участника · календарь" status={["создан", "Готово", "Яркая"]} />
-            <ListRow title="3 поручения поставлены" subtitle="с ID и сроками" status={["создано", "Готово", "Яркая"]} />
+            <ListRow title="3 поручения поставлены" subtitle="календарь Outlook" status={["создано", "Готово", "Яркая"]} />
             <ListRow urgent title="Бюджет на пилот" subtitle="остаётся у вас" status={["не выдаётся", "Нейтрально", "Темная"]} />
           </Section>
           <Section title="Версии">

@@ -2,6 +2,10 @@ import { IconButton, ListRow, ScreenHeader, Section } from "../ui";
 import { hasAccountLaunch } from "../api/mailBoard";
 import { useTaskRead, type TaskList } from "../../../../integrations/tracker/transport/bindings";
 import { useCalendar } from "./CalendarBoard";
+import { focusOn } from "../focus";
+import { boards } from "../data/content";
+import { rowSheet } from "../data/sheets";
+import { useSelf } from "../api/tracker";
 import { useApprovals } from "./LiveOverview";
 import { useNav } from "../nav";
 
@@ -9,7 +13,8 @@ import { useNav } from "../nav";
 function AccountNotifications() {
   const nav = useNav();
   const calendar = useCalendar(true);
-  const approvals = useApprovals(true);
+  const self = useSelf(true);
+  const approvals = useApprovals(true, self.name);   // в ленту идут только результаты, которые согласует сам руководитель
   const tasks = useTaskRead<TaskList>("tasks?column=overdue");
   const pending = calendar.pending;
   const error = calendar.error || approvals.error || tasks.error;
@@ -18,12 +23,12 @@ function AccountNotifications() {
     <ScreenHeader title="Уведомления" left={<IconButton icon="arrow-left" label="Назад" onClick={() => nav("back")} />} />
     <div className="body" style={{paddingBottom: 60}}>
       <Section title="Требуют внимания">
-        {error && <p role="alert">Часть данных недоступна.</p>}
-        {!error && !ready && <p role="status">Загрузка…</p>}
-        {ready && !pending.length && !approvals.data?.rows.length && !tasks.data?.rows.length && <p>Новых действий пока нет.</p>}
-        {pending.map(m => <ListRow key={m.id} urgent title={m.title} subtitle="Нужно выбрать участника встречи" status={["решение", "Внимание", "Яркая"]} onClick={() => nav("board:meetings")} />)}
-        {approvals.data?.rows.map(r => <ListRow key={r.step_id} urgent title={r.title} subtitle={r.assignee_name} status={["утвердить", "Решение", "Яркая"]} onClick={() => nav("board:approvals")} />)}
-        {tasks.data?.rows.map(t => <ListRow key={t.id} urgent title={t.title} subtitle={t.assignee_name} status={["просрочено", "Проблема", "Темная"]} onClick={() => nav("tab:tasks")} />)}
+        {error && <p role="alert" className="t-body-m c-secondary">Часть данных недоступна.</p>}
+        {!error && !ready && <p role="status" className="t-body-m c-secondary">Загрузка…</p>}
+        {ready && !pending.length && !approvals.mine.length && !tasks.data?.rows.length && <p className="t-body-m c-secondary">Новых действий пока нет.</p>}
+        {pending.map(m => <ListRow key={m.id} urgent title={m.title} subtitle="Нужно выбрать участника встречи" status={["решение", "Внимание", "Яркая"]} onClick={() => { focusOn({ kind: "meeting", id: m.id }); nav("board:meetings"); }} />)}
+        {approvals.mine.map(r => <ListRow key={r.step_id} urgent title={r.title} subtitle={r.assignee_name} status={["утвердить", "Решение", "Яркая"]} onClick={() => { focusOn({ kind: "approval", id: r.step_id }); nav("board:approvals"); }} />)}
+        {tasks.data?.rows.map(t => <ListRow key={t.id} urgent title={t.title} subtitle={t.assignee_name} status={["просрочено", "Проблема", "Темная"]} onClick={() => { focusOn({ kind: "task", id: t.id }); nav("tab:tasks"); }} />)}
       </Section>
     </div>
   </div></div>;
@@ -48,7 +53,7 @@ function DemoNotifications() {
           </Section>
           <Section title="Вчера">
             <ListRow title="Алексей сверяет прогноз декабря" subtitle="18:20 · будет готово завтра" status={["срок завтра", "Внимание", "Яркая"]} onClick={() => nav("sheet:task3")} />
-            <ListRow title="Vilar сходил на статус продаж" subtitle="11:45 · протокол разослан" status={["разослан", "Нейтрально", "Темная"]} onClick={() => nav("board:meetings")} />
+            <ListRow title="Vilar сходил на статус продаж" subtitle="11:45 · протокол разослан" status={["разослан", "Нейтрально", "Темная"]} onClick={() => { const row = boards.meetings.sections.flatMap((x) => x.rows).find((r) => r.title === "Статус продаж, неделя 48"); nav(row ? rowSheet(row) : "board:meetings"); }} />
           </Section>
         </div>
       </div>

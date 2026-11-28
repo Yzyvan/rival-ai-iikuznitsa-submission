@@ -21,6 +21,17 @@ export const useFilter = () => useSyncExternalStore((f) => { subs.add(f); return
 
 /** Подходит ли задача под фильтр */
 export function matches(t: Task, f: Filter) {
+  if (t.due !== undefined) {   // задача из трекера: сравниваем с сегодняшним днём
+    const now = new Date(), iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((7 - now.getDay()) % 7));
+    if (f.term === "today" && (!t.due || t.due > iso(now))) return false;
+    if (f.term === "week" && (!t.due || t.due > iso(weekEnd))) return false;
+    if (f.kind === "project" && !t.project) return false;
+    if (f.kind === "assign" && t.project) return false;
+    if (f.person && t.assignee !== f.person) return false;
+    if (f.project && t.project !== f.project) return false;
+    return true;
+  }
   const day = dayKey(t.date);
   if (f.term === "today" && day > TODAY) return false;
   if (f.term === "week" && day > WEEK_END) return false;
@@ -34,6 +45,10 @@ export function matches(t: Task, f: Filter) {
 /** Сколько фильтров включено — число на иконке */
 export const activeCount = (f: Filter) => Number(f.term !== "any") + Number(f.kind !== "all") + Number(!!f.person) + Number(!!f.project);
 
-const all = () => columns.flatMap((c) => c.tasks);
+// Задачи из трекера: фильтр считает людей и количество по ним, а не по макетным
+let source: Task[] | null = null;
+export const setFilterSource = (tasks: Task[] | null) => { source = tasks; subs.forEach((f) => f()); };
+const all = () => source ?? columns.flatMap((c) => c.tasks);
+export const projects = () => [...new Set(all().map((t) => t.project).filter((p): p is string => !!p))];
 export const people = () => [...new Set(all().map((t) => t.assignee))];
 export const countWith = (f: Filter) => all().filter((t) => matches(t, f)).length;

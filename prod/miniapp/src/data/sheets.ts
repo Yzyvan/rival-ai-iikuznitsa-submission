@@ -70,17 +70,25 @@ export const sheets: Record<string, SheetData> = {
   q4: { msg: "Бюджетные вопросы без вашего решения не выдаю — этот остаётся у вас.", status: ["цитата", "Нейтрально", "Темная"], quote: true, title: "«Сколько закладывать на пилот — не понимаю, это к Ивану»", tags: ["Ольга Смирнова", "14:40", proto],
     actions: [close] },
 
-  menu: { title: "Протокол", tags: [proto, "v3"], actions: [["Поделиться ссылкой", "secondary", "toast:t7"], ["История версий и выдача", "secondary", "screen:delivery"], close] },
-  help: { msg: "Разбираю почту, хожу на встречи и готовлю протоколы. Деньги, кадры и обязательства клиентам решаете только вы. Сообщения отправляю от вашего имени — только после вашего подтверждения.", title: "Как это работает",
+  menu: { title: "Протокол", tags: [proto, "v3"], actions: [["Поделиться ссылкой", "secondary", "toast:t7"], ["История версий и рассылка", "secondary", "screen:delivery"], close] },
+  help: { msg: "Разбираю почту, хожу на встречи и готовлю протоколы. Деньги, кадры, обязательства клиентам и письма руководству решаете только вы. Сообщения отправляю от вашего имени — только после вашего подтверждения.", title: "Как это работает",
     actions: [["Понятно", "ghost", "close"]] },
 };
+
+/** Шторка для строки Доски, у которой нет своей шторки или экрана: собирается из самой строки —
+    заголовок, теги и плашка те же, что в строке. Так строка не ведёт в чужой протокол или чужую рассылку. */
+export function rowSheet(r: { title: string; subtitle: string; status?: StatusSpec }): string {
+  const id = `row:${r.title}`;
+  sheets[id] ??= { status: r.status, title: r.title, tags: r.subtitle.split(" · "), actions: [close] };
+  return `sheet:${id}`;
+}
 
 /** Шторка для задачи, у которой нет своей (новые из «Добавить», перетащенные и т. п.) — собирается из карточки и колонки */
 export function taskSheet(t: { title: string; assignee: string; date: string }, column: string): string {
   const id = `auto:${column}:${t.title}`;
   if (!sheets[id]) {
     const by: Record<string, Pick<SheetData, "status" | "msg" | "actions">> = {
-      "Просрочено": { status: ["просрочено", "Проблема", "Темная"], msg: `Срок прошёл, ${t.assignee} ещё не сдал${t.assignee.endsWith("а") ? "а" : ""} задачу.`, actions: overdue },
+      "Просроченные": { status: ["просрочено", "Проблема", "Темная"], msg: `Срок прошёл, ${t.assignee} ещё не сдал${t.assignee.endsWith("а") ? "а" : ""} задачу.`, actions: overdue },
       "В работе": { status: ["в срок", "Готово", "Яркая"], msg: `${t.assignee} в работе, срок соблюдается.`, actions: [remind(), close] },
       "Новые": { status: ["новая", "Нейтрально", "Темная"], msg: "Задача поставлена, исполнитель ещё не взял её в работу. Напомню, если не начнёт до завтра.", actions: [remind(), close] },
       "Готово": { status: ["готово", "Готово", "Яркая"], msg: "Задача выполнена.", actions: [close] },

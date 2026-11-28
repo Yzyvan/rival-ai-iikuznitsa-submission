@@ -98,8 +98,8 @@ function AccountStats() {
   const approvals = useApprovals(true);
   const failed = mail.error || calendar.error || tasks.error || approvals.error;
   if (failed || !mail.messages || !calendar.meetings || !tasks.data || !approvals.data) {
-    return <div className="screen"><div className="scroll"><header className="header"><span className="header__title t-body-l">Статистика</span></header>
-      <div className="body"><p role="status">{failed ? "Не удалось загрузить данные отчёта." : "Загрузка…"}</p></div></div></div>;
+    return <div className="screen"><div className="scroll"><header className="header"><span className="header__title t-body-l">Итоги</span></header>
+      <div className="body"><p role="status" className="t-body-m c-secondary">{failed ? "Не удалось загрузить данные отчёта." : "Загрузка…"}</p></div></div></div>;
   }
   const today = new Date(moscowDate.format(new Date()) + "T00:00:00Z");
   const monday = new Date(today);

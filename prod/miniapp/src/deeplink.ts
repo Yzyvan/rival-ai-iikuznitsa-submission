@@ -41,7 +41,7 @@ function homeOf(sheet: string): { tab: TabId; stage?: StageId } | undefined {
   return undefined;
 }
 
-export function readDeepLink(nested: Record<string, unknown>, live = false, showTracker = false): DeepLink {
+export function readDeepLink(nested: Record<string, unknown>, live = false): DeepLink {
   const { targets, skip } = rawTargets();
   const link: DeepLink = { skip, screens: [] };
   for (const t of targets) {
@@ -58,13 +58,15 @@ export function readDeepLink(nested: Record<string, unknown>, live = false, show
     else if (kind === "screen" && id in nested) link.screens.push(id);
     else if (kind === "sheet" && (id in sheets || id === "newtask" || id === "filter")) link.sheet = id;
   }
+  // ?stage=mail — этап, на котором человек был до перезагрузки. Это не ссылка: прелоудер показывается как обычно.
+  const remembered = new URLSearchParams(location.search).get("stage");
+  if (!link.stage && remembered && remembered in boards) link.stage = remembered as StageId;
   if (link.sheet === "filter" && !link.tab) link.tab = "tasks";   // фильтр живёт в Тасках
   if (link.sheet && !link.tab && !link.screens.length) Object.assign(link, homeOf(link.sheet));
   if (live && link.sheet) {
     // Older bot cards identify a demo sheet rather than a backend record. Open its live list.
     if (/^task\d+$/.test(link.sheet) || link.sheet === "newtask") link.tab = "tasks";
-    const taskSheet = link.sheet === "filter" || link.sheet === "newtask" || /^task\d+$/.test(link.sheet);
-    if (showTracker || link.tab !== "tasks" || !taskSheet) delete link.sheet;
+    delete link.sheet;
   }
   // открыли по ссылке на конкретное место — сразу туда, без прелоудера
   if (link.tab || link.screens.length || link.sheet) link.skip = true;

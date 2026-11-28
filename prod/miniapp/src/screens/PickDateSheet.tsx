@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Button, Icon, IconButton, VilarHint } from "../ui";
 import { useSwipeDown } from "../ui/useSwipeDown";
 import { tick } from "../haptics";
+import { hasAccountLaunch } from "../api/mailBoard";
 
 /* Шторка «Новый срок»: свой выбор дня и времени (без системных пикеров) — для «Перенести срок» и «Другая дата».
    Сначала день (Сегодня / Завтра / пятница или календарь), потом время; кнопка — когда выбраны оба. */
@@ -9,7 +10,7 @@ import { tick } from "../haptics";
 const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 const MONTHS_TITLE = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
-const TODAY = new Date(2026, 11, 7);
+const TODAY = hasAccountLaunch ? new Date(new Date().setHours(0, 0, 0, 0)) : new Date(2026, 11, 7);
 const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 const TIMES = ["10:00", "11:00", "12:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00"];

@@ -172,8 +172,8 @@ function useSlider(index: number) {
 export type TabId = "board" | "tasks" | "stats";
 const tabs: { id: TabId; label: string; icon: IconName }[] = [
   { id: "board", label: "Доска", icon: "inbox" },
-  { id: "tasks", label: "Таски", icon: "dashboard" },
-  { id: "stats", label: "Статы", icon: "chart" },
+  { id: "tasks", label: "Задачи", icon: "dashboard" },
+  { id: "stats", label: "Итоги", icon: "chart" },
 ];
 export function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => void }) {
   const { box, style } = useSlider(tabs.findIndex((t) => t.id === active));

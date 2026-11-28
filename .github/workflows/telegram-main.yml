@@ -41,15 +41,10 @@ jobs:
           for attempt in range(4):
               try:
                   pulls = read_json(pulls_url, github)
-                  pr = next((p for p in pulls if p["merged_at"] and p["base"]["ref"] == "main"
+                  pr = next((p["number"] for p in pulls if p["merged_at"] and p["base"]["ref"] == "main"
                              and p["base"]["repo"]["full_name"] == repo and p["merge_commit_sha"] == head), None)
                   identity = read_json(oidc_url, {"Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
-                  data = json.dumps({
-                      "pr": pr["number"] if pr else None,
-                      "pr_author": (pr.get("user") or {}).get("login") if pr else None,
-                      "before": event["before"],
-                      "multiple": len(event.get("commits", [])) > 1,
-                  }).encode()
+                  data = json.dumps({"pr": pr, "before": event["before"], "multiple": len(event.get("commits", [])) > 1}).encode()
                   result = read_json(endpoint, {"Authorization": "Bearer " + identity["value"], "Content-Type": "application/json"}, data)
                   if result.get("ok") is not True:
                       raise RuntimeError("Telegram delivery was not confirmed")

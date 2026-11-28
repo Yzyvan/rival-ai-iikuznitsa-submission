@@ -3,7 +3,7 @@ import { fetchImportedMail, TelegramLaunchError, telegramWebApp, type ImportedMa
 import { createPortal } from "react-dom";
 import { BoardDocument } from "./BoardDocument";
 import { SheetView } from "./SheetView";
-import { ListRow, Section } from "../ui";
+import { Button, ListRow, Section } from "../ui";
 
 export function useImportedMail() {
   const [messages, setMessages] = useState<ImportedMail[] | null>(null);
@@ -36,9 +36,9 @@ export function MailBoard({ mail }: { mail: ReturnType<typeof useImportedMail> }
     <Section title="Загруженные письма">
       {error && <p role="alert" className="t-body-m c-secondary">{error.message}</p>}
       {needsNewLaunch && Boolean(telegram?.initDataUnsafe?.user) && telegram?.close &&
-        <button type="button" className="btn btn--secondary btn--s" onClick={() => telegram.close?.()}>Закрыть Vilar</button>}
+        <Button label="Закрыть Vilar" variant="secondary" size="s" fill onClick={() => telegram.close?.()} />}
       {error && !needsNewLaunch &&
-        <button type="button" className="btn btn--secondary btn--s" onClick={refresh}>Повторить</button>}
+        <Button label="Повторить" variant="secondary" size="s" fill onClick={refresh} />}
       {!error && messages === null && <p role="status" className="t-body-m c-secondary">Загрузка…</p>}
       {!error && messages?.length === 0 && <p className="t-body-m c-secondary">Загруженных писем пока нет.</p>}
       {messages?.map(message => (

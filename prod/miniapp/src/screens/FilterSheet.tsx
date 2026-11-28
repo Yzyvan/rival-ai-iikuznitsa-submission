@@ -2,9 +2,10 @@ import { useRef, useState } from "react";
 import { useSwipeDown } from "../ui/useSwipeDown";
 import { Avatar, Button, IconButton, Segmented } from "../ui";
 import { tick } from "../haptics";
-import { countWith, people, resetFilter, setFilter, useFilter, type Kind, type Term } from "../data/filters";
+import { countWith, people, projects, resetFilter, setFilter, useFilter, type Kind, type Term } from "../data/filters";
 import { plural } from "../data/content";
 import { PROJECTS } from "./NewTaskSheet";
+import { hasAccountLaunch } from "../api/mailBoard";
 
 const TERMS: Term[] = ["today", "week", "any"];
 const KINDS: Kind[] = ["all", "project", "assign"];
@@ -61,7 +62,7 @@ export function FilterSheet({ onClose }: { onClose: () => void }) {
           <div className="nt-section">
             <span className="t-overline c-tertiary">Проект</span>
             <div className="flt-scroll">
-              {[null, ...PROJECTS.map((p) => p.name)].map((p) => (
+              {[null, ...(hasAccountLaunch ? projects() : PROJECTS.map((p) => p.name))].map((p) => (
                 <button key={p ?? "all"} type="button" className={`nt-chip t-body-m-medium${f.project === p ? " is-on" : ""}`}
                   onClick={() => { tick(); setFilter({ project: p, kind: p ? "project" : f.kind }); }}>{p ?? "Все"}</button>
               ))}

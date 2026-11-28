@@ -11,7 +11,7 @@ export const userInitials = "ИП";   // пользователь в истор�
 // Этапы доски. Порядок вкладок = порядок в этом списке: чтобы переставить этапы, достаточно поменять строки местами.
 // Первый в списке открывается по умолчанию.
 export const stages: { id: StageId; label: string; count: number }[] = [
-  { id: "approvals", label: "Согласование", count: 8 },
+  { id: "approvals", label: "Поручения", count: 8 },
   { id: "meetings", label: "Встречи", count: 4 },
   { id: "mail", label: "Почта", count: 7 },
 ];
@@ -68,13 +68,14 @@ export const boards: Record<StageId, Board> = {
         ],
       },
       {
+        // протокол и рассылка в макете есть только у встречи «Интеграция „Ромашка-Ритейл“»; остальные строки открывают свою шторку
         title: "Прошедшие", rows: [
-          { urgent: true, title: "Бюджет digital-каналов", subtitle: "3 дек · v1 · нет исполнителя", status: ["уточнить", "Внимание", "Яркая"], open: "screen:protocol" },
-          { title: "Критерии сделок SMB", subtitle: "2 дек · v2 · правит Ольга", status: ["черновик", "Нейтрально", "Темная"], open: "screen:protocol" },
-          { title: "1:1 с Дмитрием Козловым", subtitle: "2 дек · разослан 2 из 2", status: ["доставлено", "Готово", "Яркая"], open: "screen:delivery-done" },
-          { title: "Статус продаж, неделя 48", subtitle: "1 дек · разослан 6 из 6", status: ["доставлено", "Готово", "Яркая"], open: "screen:delivery-done" },
-          { title: "Планёрка e-com, ноябрь", subtitle: "30 ноя · разослан 5 из 5", status: ["доставлено", "Готово", "Яркая"], open: "screen:delivery-done" },
-          { title: "Комитет по бюджету, ноябрь", subtitle: "30 ноя · разослан 7 из 7", status: ["доставлено", "Готово", "Яркая"], open: "screen:delivery-done" },
+          { urgent: true, title: "Бюджет digital-каналов", subtitle: "3 дек · v1 · нет исполнителя", status: ["уточнить", "Внимание", "Яркая"] },
+          { title: "Критерии сделок SMB", subtitle: "2 дек · v2 · правит Ольга", status: ["черновик", "Нейтрально", "Темная"] },
+          { title: "1:1 с Дмитрием Козловым", subtitle: "2 дек · разослан 2 из 2", status: ["доставлено", "Готово", "Яркая"] },
+          { title: "Статус продаж, неделя 48", subtitle: "1 дек · разослан 6 из 6", status: ["доставлено", "Готово", "Яркая"] },
+          { title: "Планёрка e-com, ноябрь", subtitle: "30 ноя · разослан 5 из 5", status: ["доставлено", "Готово", "Яркая"] },
+          { title: "Комитет по бюджету, ноябрь", subtitle: "30 ноя · разослан 7 из 7", status: ["доставлено", "Готово", "Яркая"] },
         ],
       },
     ],
@@ -87,6 +88,8 @@ export const boards: Record<StageId, Board> = {
 export type Load = "green" | "yellow" | "red";
 export const decisionsWaiting = Object.values(boards).reduce((n, b) => n + b.urgent.length, 0);
 export const loadOf = (n: number): Load => (n <= 3 ? "green" : n <= 6 ? "yellow" : "red");
+/** цвет фона задан в адресе (?load=…) — тогда он не пересчитывается */
+export const loadForced = new URLSearchParams(location.search).get("load") !== null;
 export const load: Load = (() => {
   const q = new URLSearchParams(location.search).get("load");
   if (q === "green" || q === "yellow" || q === "red") return q;
@@ -113,24 +116,26 @@ export const glow = glowFor(load);
 
 /* ── Таски: канбан по статусам ── */
 /** project — проект из формы «Новая задача»; задача без проекта — поручение */
-export type Task = { date: string; title: string; assignee: string; open?: string; project?: string };
-export const columns: { title: string; glow: string; dot: string; tasks: Task[] }[] = [
-  { title: "Просрочено", glow: "#b50028", dot: "var(--status-problem-fg)", tasks: [
+/** id, due, rec — только у задач из трекера: due — срок датой (2026-12-11 или null), rec — запись трекера целиком */
+export type Task = { date: string; title: string; assignee: string; open?: string; project?: string; id?: string; due?: string | null; rec?: import("../api/tracker").TaskRecord };
+/** Колонки канбана в порядке трекера: «Просроченные», «Новые», «В работе», «Готово». code — код колонки в трекере */
+export const columns: { code: import("../api/tracker").ColumnCode; title: string; glow: string; dot: string; tasks: Task[] }[] = [
+  { code: "overdue", title: "Просроченные", glow: "#b50028", dot: "var(--status-problem-fg)", tasks: [
     { date: "был 5 дек", title: "КП для «ТехноСтрой» на 40 лицензий", assignee: "Ольга Смирнова", open: "sheet:task1", project: "«ТехноСтрой»" },
     { date: "был 6 дек", title: "Отчёт по e-com за ноябрь", assignee: "Анна Волкова", open: "sheet:task2" },
   ] },
-  { title: "В работе", glow: "#eee65a", dot: "var(--status-attention-fg)", tasks: [
+  { code: "new", title: "Новые", glow: "#ff5379", dot: "var(--status-neutral-fg)", tasks: [
+    { date: "до 11 дек", title: "Согласовать окно работ с клиентом", assignee: "Ольга Смирнова", open: "sheet:task9", project: "«Ромашка-Ритейл»" },
+    { date: "до 21 дек", title: "План партнёрских мероприятий Q1", assignee: "Сергей Морозов", open: "sheet:task7" },
+    { date: "до 22 дек", title: "Тезисы к совету директоров", assignee: "Алексей Новиков", open: "sheet:task8" },
+  ] },
+  { code: "in_progress", title: "В работе", glow: "#eee65a", dot: "var(--status-attention-fg)", tasks: [
     { date: "до 8 дек", title: "Сверить прогноз декабря с CRM", assignee: "Алексей Новиков", open: "sheet:task3" },
     { date: "до 10 дек", title: "Дорожная карта интеграции «Ромашка-Ритейл»", assignee: "Мария Лебедева", open: "sheet:task6", project: "«Ромашка-Ритейл»" },
     { date: "до 12 дек", title: "Креативы январской кампании", assignee: "Дмитрий Козлов", open: "sheet:task4" },
     { date: "до 15 дек", title: "Онбординг аккаунт-менеджера", assignee: "Екатерина Соколова", open: "sheet:task5", project: "Найм AM" },
   ] },
-  { title: "Новые", glow: "#ff5379", dot: "var(--status-neutral-fg)", tasks: [
-    { date: "до 11 дек", title: "Согласовать окно работ с клиентом", assignee: "Ольга Смирнова", open: "sheet:task9", project: "«Ромашка-Ритейл»" },
-    { date: "до 21 дек", title: "План партнёрских мероприятий Q1", assignee: "Сергей Морозов", open: "sheet:task7" },
-    { date: "до 22 дек", title: "Тезисы к совету директоров", assignee: "Алексей Новиков", open: "sheet:task8" },
-  ] },
-  { title: "Готово", glow: "#3deb8c", dot: "var(--status-done-fg)", tasks: [
+  { code: "done", title: "Готово", glow: "#3deb8c", dot: "var(--status-done-fg)", tasks: [
     { date: "7 дек", title: "Запрос КП от «ТехноСтрой»", assignee: "Ольга Смирнова", open: "sheet:done1", project: "«ТехноСтрой»" },
     { date: "7 дек", title: "Перенос 1:1 на 14:00", assignee: "Ольга Смирнова", open: "sheet:del2" },
     { date: "4 дек", title: "Итог встречи по интеграции", assignee: "Мария Лебедева", open: "sheet:done2", project: "«Ромашка-Ритейл»" },
@@ -156,9 +161,9 @@ export const stats = {
   },
   tiles: [
     { label: "Освобождено", value: "8 ч", caption: "цель 8–12 ч", icon: "clock", level: "Хорошо" },
-    { label: "Писем", value: "312", caption: "41 решение в Telegram", icon: "mail", level: "Хорошо" },
+    { label: "Без вас", value: "87%", caption: "271 из 312 писем", icon: "mail", level: "Хорошо" },
     { label: "Протоколов", value: "9", caption: "4 мин до черновика", icon: "clipboard", level: "Хорошо" },
-    { label: "В срок", value: "87%", caption: "2 просрочки: Ольга и Анна", icon: "check-circle", level: "Внимание" },
+    { label: "Правки", value: "2", caption: "применены 5 раз", icon: "check-circle", level: "Хорошо" },
   ] as const,
   // «По дням»: столбцы по дням недели, переключатель метрик. Итоги совпадают с плитками сверху.
   byDay: {
@@ -191,4 +196,7 @@ export const toasts: Record<string, { type: "Success" | "Error"; text: string }>
   t14: { type: "Success", text: "Встреча создана, приглашения уйдут участникам" },
   t15: { type: "Success", text: "Напомню в срок" },
   t16: { type: "Success", text: "Поручение отправлено от вашего имени" },
+  t17: { type: "Success", text: "Письмо оставлено без ответа" },
+  t18: { type: "Success", text: "Результат согласован" },
+  t19: { type: "Error", text: "Возвращено на доработку" },
 };

@@ -1,26 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Icon } from "../ui";
 
-type Status = "connected" | "needs_login" | "error";
-type Connections = { mail: Status; calendar: Status; can_manage: boolean };
-type WebApp = { initData: string; openLink(url: string): void };
-const telegram = () => (window as Window & { Telegram?: { WebApp?: WebApp } }).Telegram?.WebApp;
+import { completeMicrosoftLogin, connectionsApi as api, microsoftLink, telegram, type Connections } from "../api/connections";
 const labels = { connected: "Подключено", needs_login: "Требуется вход", error: "Ошибка доступа" };
-const completed = new Set<string>();
 
-async function api<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const init = telegram()?.initData;
-  if (!init) throw new Error("Откройте Vilar из Telegram.");
-  const response = await fetch(path, { method, cache: "no-store", redirect: "error",
-    headers: { Authorization: "tma " + init, ...(body ? { "Content-Type": "application/json" } : {}) },
-    body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(45000) });
-  if (response.status === 429) throw new Error("Microsoft ограничил запросы. Повторите позже.");
-  if (response.status === 401) throw new Error("Откройте мини-апп заново в Telegram.");
-  if (!response.ok) throw new Error("Не удалось завершить запрос. Попробуйте ещё раз.");
-  return await response.json() as T;
-}
-
-export function OutlookConnections({ profile = false }: { profile?: boolean }) {
+export function OutlookConnections({ profile = false, onChange }: { profile?: boolean; onChange?: (state: Connections) => void }) {
   const [connections, setConnections] = useState<Connections>();
   const [url, setUrl] = useState("");
   const [waiting, setWaiting] = useState(false);
@@ -29,25 +13,19 @@ export function OutlookConnections({ profile = false }: { profile?: boolean }) {
   const [error, setError] = useState("");
   const generation = useRef(0);
   const mounted = useRef(false);
+  useEffect(() => { if (connections) onChange?.(connections); }, [connections, onChange]);
   const message = (e: unknown) => e instanceof Error && e.name === "Error" ? e.message : "Сервис подключений недоступен.";
 
   useEffect(() => {
     mounted.current = true;
-    const start = new URLSearchParams(telegram()?.initData).get("start_param") ?? "";
     const sequence = ++generation.current;
     (async () => {
       try {
-        let data: Connections;
-        if (/^ms_[\w-]{43}$/.test(start) && !completed.has(start)) {
-          await api("/auth/microsoft/finish", "POST");
-          completed.add(start);
-          data = await api("/me/connections/check", "POST");
-        } else {
-          data = await api("/me/connections");
-        }
+        const login = await completeMicrosoftLogin();
+        const data = await api<Connections>("/me/connections");
         if (sequence === generation.current) {
           setConnections(data);
-          if (start === "ms_error") setError("Microsoft не выдал доступ. Можно повторить вход.");
+          if (login === "error") setError("Microsoft не выдал доступ. Можно повторить вход.");
         }
       } catch (e) {
         if (sequence === generation.current) setError(message(e));
@@ -90,13 +68,10 @@ export function OutlookConnections({ profile = false }: { profile?: boolean }) {
   }
   const prepare = (requested: "read" | "manage") => act(async () => {
     mode.current = requested;
-    const reply = await api<{ url: string }>("/auth/microsoft/intent", "POST", { mode: requested });
-    const link = new URL(reply.url);
-    if (link.origin !== location.origin || link.pathname !== "/auth/microsoft/start") throw new Error("Проверьте адрес сервиса подключений.");
-    setUrl(link.href);
+    setUrl(await microsoftLink(requested));
   });
   const open = () => {
-    try { telegram()!.openLink(url); setWaiting(true); setUrl(""); }
+    try { telegram()!.openLink!(url); setWaiting(true); setUrl(""); }
     catch { setError("Не удалось открыть Microsoft. Повторите вход."); }
   };
   const linked = connections?.mail === "connected" || connections?.calendar === "connected";
