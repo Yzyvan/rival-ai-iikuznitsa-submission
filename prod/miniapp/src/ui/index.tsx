@@ -7,10 +7,10 @@ export { Icon, Mark, Wordmark };
 export type { IconName };
 
 /* ── Button ── */
-type ButtonProps = { label: string; variant?: "primary" | "secondary" | "ghost"; size?: "m" | "s"; fill?: boolean; icon?: IconName; onClick?: () => void };
-export function Button({ label, variant = "primary", size = "m", fill, icon, onClick }: ButtonProps) {
+type ButtonProps = { label: string; disabled?: boolean; variant?: "primary" | "secondary" | "ghost"; size?: "m" | "s"; fill?: boolean; icon?: IconName; onClick?: () => void };
+export function Button({ label, variant = "primary", size = "m", fill, icon, disabled, onClick }: ButtonProps) {
   return (
-    <button type="button" className={`btn btn--${variant}${size === "s" ? " btn--s" : ""}${fill ? " btn--fill" : ""}`} onClick={onClick}>
+    <button type="button" disabled={disabled} className={`btn btn--${variant}${size === "s" ? " btn--s" : ""}${fill ? " btn--fill" : ""}`} onClick={onClick}>
       {label}
       {icon && <Icon name={icon} size={size === "s" ? 16 : 20} />}
     </button>
@@ -207,7 +207,8 @@ export function VilarMessage({ text }: { text: string }) {
 }
 
 /* ── Draft Card: черновик, который уйдёт от имени пользователя. Карандаш — поправить текст перед отправкой ── */
-export function DraftCard({ caption, text }: { caption: string; text: string }) {
+/** onSave — правку нужно сохранить (живые данные); readOnly — без карандаша; empty — что написать, если текста ещё нет */
+export function DraftCard({ caption, text, onSave, readOnly, empty }: { caption: string; text: string; onSave?: (text: string) => void; readOnly?: boolean; empty?: string }) {
   const [value, setValue] = useState(text);
   const [editing, setEditing] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -223,7 +224,7 @@ export function DraftCard({ caption, text }: { caption: string; text: string }) 
     const el = input.current;
     if (editing && el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   }, [editing]);
-  const finish = () => { setEditing(false); if (!value.trim()) setValue(text); };
+  const finish = () => { setEditing(false); if (!value.trim()) setValue(text); else if (value.trim() !== text.trim()) onSave?.(value); };
   const toggle = () => { pressing.current = false; tick(); if (editing) finish(); else setEditing(true); };
   const edited = !editing && value.trim() !== text;
   return (
@@ -233,14 +234,14 @@ export function DraftCard({ caption, text }: { caption: string; text: string }) 
           <span className="t-caption c-secondary">{caption}</span>
           {edited && <Tag label="изменено" />}
         </span>
-        <button type="button" className="draft-card__edit" aria-label={editing ? "Готово" : "Изменить текст"}
+        {!readOnly && <button type="button" className="draft-card__edit" aria-label={editing ? "Готово" : "Изменить текст"}
           onPointerDown={(e) => { pressing.current = true; e.preventDefault(); }} onPointerCancel={() => { pressing.current = false; }} onClick={toggle}>
           <Icon name={editing ? "check" : "edit"} size={24} />
-        </button>
+        </button>}
       </div>
       {editing
         ? <textarea ref={input} className="draft-card__input t-body-l" rows={1} value={value} onChange={(e) => setValue(e.target.value)} onBlur={() => { if (!pressing.current) finish(); }} />
-        : <span className="t-body-l">{value}</span>}
+        : value ? <span className="t-body-l" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{value}</span> : <span className="t-body-l c-secondary">{empty}</span>}
     </div>
   );
 }

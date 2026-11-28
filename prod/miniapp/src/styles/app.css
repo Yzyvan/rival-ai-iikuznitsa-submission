@@ -508,3 +508,12 @@ svg { display: block; flex: none; }
 .flt-scroll .nt-chip { flex: none; white-space: nowrap; }
 .flt-actions { display: flex; gap: var(--space-2); }
 .flt-actions .btn--fill { flex: 1; }
+
+.preview-editor { position: absolute; inset: 0; z-index: 45; display: flex; flex-direction: column; gap: var(--space-4); padding: calc(var(--space-5) + env(safe-area-inset-top, 0px)) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom, 0px)); background: var(--bg-surface); overflow: auto; }
+.preview-editor__input { display: block; flex: 1 1 auto; min-height: 5em; width: 100%; padding: var(--space-4); border-radius: var(--radius-m); border: 1px solid currentColor; resize: none; background: var(--bg-surface); color: var(--text-primary); font-family: inherit; }
+.quarantine-sheet__meta { display: grid; gap: var(--space-2); margin: 0; }
+.quarantine-sheet__meta div { display: grid; grid-template-columns: 102px minmax(0, 1fr); gap: var(--space-2); }
+.quarantine-sheet__meta dt { font-weight: 500; }
+.quarantine-sheet__meta dd { margin: 0; overflow-wrap: anywhere; }
+.quarantine-sheet__text { white-space: pre-wrap; text-align: justify; hyphens: auto; overflow-wrap: anywhere; }
+.quarantine-sheet__meta .quarantine-sheet__receipt { display: flex; flex-direction: column; gap: var(--space-1); }

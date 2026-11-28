@@ -4,24 +4,26 @@ import { boards, glowFor, load, loadOf, playGlow, stages, today, userInitials, t
 import { Avatar, IconButton, ListRow, LoadBadge, Mark, Section, Wordmark } from "../ui";
 import { useNav } from "../nav";
 import { whoop } from "../haptics";
-import { MailBoard, useImportedMail } from "./MailBoard";
+import { MailSections, MailUrgent, mailHeroLabel, useMail } from "./MailStage";
 import { hasAccountLaunch } from "../api/mailBoard";
 import { LiveApprovals, useApprovals } from "./LiveOverview";
 
 /** Доска: три этапа. Сверху на красной подложке — то, что ждёт решения, ниже — то, что Vilar сделал сам. */
-export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId) => void }) {
+export function Board({ stage, onStage, initialMailTicket }: { stage: StageId; onStage: (s: StageId) => void; initialMailTicket?: string }) {
   const nav = useNav();
   const data = boards[stage];
   const approvals = useApprovals(hasAccountLaunch);
   const liveApprovals = hasAccountLaunch && stage === "approvals";
   const isCalendar = stage === "meetings";
   const calendar = useCalendar(true);
+  const mail = useMail();
+  const [openedMail, openMail] = useState<string | null>(initialMailTicket ?? null);
+  const mailCount = mail.mode === "legacy" ? mail.shown : mail.needs;
   const heroLoad = hasAccountLaunch
-    ? loadOf(calendar.pending.length + (approvals.data?.rows.length ?? 0))
+    ? loadOf(calendar.pending.length + (approvals.data?.rows.length ?? 0) + (mail.needs ?? 0))
     : isCalendar && calendar.pending.length ? "red" : load;
   const hero = glowFor(heroLoad);
   const isMail = stage === "mail";
-  const mail = useImportedMail();
   const wrap = useRef<HTMLDivElement>(null);
   const glowBox = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -87,7 +89,7 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
                         className={`stage-tab t-body-m-medium${s.id === stage ? " is-active" : ""}`} onClick={() => { if (s.id !== stage) whoop(); onStage(s.id); }}>
                   {s.label}
                   {s.id !== stage && (s.id === "mail"
-                    ? mail.messages && <LoadBadge count={mail.messages.length} />
+                    ? Boolean(mailCount) && <LoadBadge count={mailCount!} />
                     : s.id === "meetings" ? calendar.meetings && <LoadBadge count={calendar.pending.length} /> : hasAccountLaunch ? approvals.data && <LoadBadge count={approvals.data.rows.length} /> : <LoadBadge count={s.count} />)}
                 </button>
               ))}
@@ -106,10 +108,11 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
           <div className="hero">
             <div key={stage} className="hero__body stage-content" style={{ gap: 28 }}>
               <div className="hero__count">
-                <span className="t-hero-number">{isMail ? mail.messages?.length ?? "—" : isCalendar ? (calendar.meetings ? calendar.pending.length : "—") : liveApprovals ? approvals.data?.rows.length ?? "—" : data.hero.count}</span>
-                <span className="t-body-l">{isMail ? "письма из Outlook" : isCalendar ? (calendar.pending.length === 1 ? "решение по встрече" : "решения по встречам") : liveApprovals ? "на согласовании" : data.hero.label}</span>
+                <span className="t-hero-number">{isMail ? mailCount ?? "—" : isCalendar ? (calendar.meetings ? calendar.pending.length : "—") : liveApprovals ? approvals.data?.rows.length ?? "—" : data.hero.count}</span>
+                <span className="t-body-l">{isMail ? (mail.mode === "legacy" ? "письма из Outlook" : mailHeroLabel(mail.needs ?? 0)) : isCalendar ? (calendar.pending.length === 1 ? "решение по встрече" : "решения по встречам") : liveApprovals ? "на согласовании" : data.hero.label}</span>
               </div>
               <div className="hero__rows">
+                {isMail && <MailUrgent mail={mail} onOpen={openMail} />}
                 {isCalendar && <CalendarDecisions {...calendar} />}
                 {!isMail && !isCalendar && !liveApprovals && data.urgent.map((r) => <ListRow key={r.title} urgent title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
               </div>
@@ -118,7 +121,7 @@ export function Board({ stage, onStage }: { stage: StageId; onStage: (s: StageId
         </div>
 
         <div key={stage} className="board-sheet stage-content">
-          {isMail ? <MailBoard mail={mail} /> : isCalendar ? <CalendarBoard {...calendar} /> : liveApprovals ? <LiveApprovals {...approvals} /> : data.sections.map((s) => (
+          {isMail ? <MailSections mail={mail} opened={openedMail} onOpen={openMail} /> : isCalendar ? <CalendarBoard {...calendar} /> : liveApprovals ? <LiveApprovals {...approvals} /> : data.sections.map((s) => (
             <Section key={s.title} title={s.title} vilar={s.vilar}>
               {s.rows.map((r) => <ListRow key={r.title} urgent={r.urgent} title={r.title} subtitle={r.subtitle} status={r.status} onClick={() => r.open && nav(r.open)} />)}
             </Section>

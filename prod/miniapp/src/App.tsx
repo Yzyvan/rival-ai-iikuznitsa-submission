@@ -127,7 +127,7 @@ export function App() {
     <NavContext.Provider value={nav}>
       <div className="app">
         {/* раздел меню рисуется всегда — вложенный экран ложится сверху (и может раскрыться кругом из кнопки) */}
-        {tab === "board" && <Board stage={stage} onStage={selectStage} />}
+        {tab === "board" && <Board stage={stage} onStage={selectStage} initialMailTicket={deep.mailTicket} />}
         {tab === "tasks" && (showTracker
           ? <TaskBindingsProvider bindings={standBindings}><TrackerTasks /></TaskBindingsProvider>
           : <Tasks />)}
